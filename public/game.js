@@ -946,7 +946,7 @@ function handleEvents(events) {
         dust(ev.x, ev.y, 3);
         break;
       case 'foxgiveup':
-        floatingTexts.push({ x: ev.x, y: ev.y - 6, text: '…?', color: '#ffd9b3', life: 1.2, size: 13 });
+        floatingTexts.push({ x: ev.x, y: ev.y - 6, text: '?', color: '#ffd9b3', life: 1.2, size: 15 });
         break;
       case 'foxflee':
         floatingTexts.push({ x: ev.x, y: ev.y - 6, text: 'fuj!', color: '#9fd66b', life: 1, size: 12 });
@@ -1562,14 +1562,30 @@ function drawPlatforms(g, time, broken) {
       return;
     }
     if (p.branch) {
+      // A branch grows out of its trunk: thick where it meets the bark, tapering to a leafy tip.
+      const trunk = world.trunks.find((t) => t.id === p.trunk);
+      const trunkRight = trunk ? trunk.x > p.x + p.w / 2 : false;
+      const root = trunkRight ? x + p.w + 12 : x - 12; // reaches into the trunk
+      const tip = trunkRight ? x : x + p.w;
+      const dir = trunkRight ? -1 : 1;
       g.fillStyle = '#6f4a2b';
       g.beginPath();
-      g.moveTo(x, y + p.h / 2);
-      g.quadraticCurveTo(x + p.w / 2, y - 2, x + p.w, y + p.h / 2);
-      g.quadraticCurveTo(x + p.w / 2, y + p.h + 4, x, y + p.h / 2);
+      g.moveTo(root, y - 2);
+      g.quadraticCurveTo(root + dir * p.w * 0.5, y - 6, tip, y + 2);
+      g.lineTo(tip, y + 6);
+      g.quadraticCurveTo(root + dir * p.w * 0.5, y + p.h + 2, root, y + p.h + 4);
+      g.closePath();
       g.fill();
+      g.fillStyle = '#4a3320';
+      g.fillRect(root - (trunkRight ? 0 : 0), y + 3, dir * 18, p.h - 2);
+      // Moss on top and a tuft of leaves at the tip
       g.fillStyle = '#4c9a3f';
-      g.fillRect(x + 6, y - 3, p.w - 12, 4);
+      g.fillRect(Math.min(root, tip) + 10, y - 3, p.w - 8, 4);
+      g.fillStyle = '#3f9a5a';
+      g.beginPath();
+      g.ellipse(tip + dir * 4, y - 4, 16, 9, 0, 0, Math.PI * 2);
+      g.ellipse(tip - dir * 10, y - 12, 12, 7, 0, 0, Math.PI * 2);
+      g.fill();
       return;
     }
     g.fillStyle = '#5a3a1f';
