@@ -84,6 +84,7 @@ let nextId = 1;
 let totalKills = 0;
 let spawnTimer = 2;
 let gameTime = 0;
+let announcedWave = 1;
 
 const rand = (a, b) => a + Math.random() * (b - a);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -135,13 +136,22 @@ function pickOutfit() {
   return players.size % OUTFIT_COUNT;
 }
 
-function createPlayer(ws, name) {
+function createPlayer(ws, name, wantedOutfit) {
   const id = nextId++;
+  const used = new Set([...players.values()].map((p) => p.outfit));
+  const outfit =
+    Number.isInteger(wantedOutfit) && wantedOutfit >= 0 && wantedOutfit < OUTFIT_COUNT && !used.has(wantedOutfit)
+      ? wantedOutfit
+      : pickOutfit();
   const player = {
     id,
     ws,
     name,
-    outfit: pickOutfit(),
+    outfit,
+    spawnedAt: gameTime,
+    lifeKills: 0,
+    bestSurvival: 0,
+    bestLifeKills: 0,
     x: SPAWN_POINT.x + rand(-80, 80),
     y: SPAWN_POINT.y,
     vx: 0,
@@ -168,6 +178,8 @@ function createPlayer(ws, name) {
 function respawnPlayer(p) {
   p.alive = true;
   p.hp = PLAYER.hp;
+  p.spawnedAt = gameTime;
+  p.lifeKills = 0;
   p.x = SPAWN_POINT.x + rand(-80, 80);
   p.y = SPAWN_POINT.y;
   p.vx = 0;
@@ -233,6 +245,9 @@ function damagePlayer(p, amount, fromX) {
     p.alive = false;
     p.deaths++;
     p.respawnTimer = PLAYER.respawn;
+    p.lastSurvival = gameTime - p.spawnedAt;
+    p.bestSurvival = Math.max(p.bestSurvival, p.lastSurvival);
+    p.bestLifeKills = Math.max(p.bestLifeKills, p.lifeKills);
     pushEvent({ kind: 'death', id: p.id, name: p.name, x: p.x + p.w / 2, y: p.y + p.h / 2 });
   }
 }
@@ -304,10 +319,12 @@ function updateFox(fox, dt) {
       if (dy < -40 && Math.abs(dx) < 260) {
         fox.vy = -FOX.jump;
         fox.jumpTimer = rand(0.6, 1.2);
+        pushEvent({ kind: 'foxjump', id: fox.id, x: fox.x + fox.w / 2, y: fox.y + fox.h });
       } else if (Math.abs(dx) < 120 && Math.random() < 0.4) {
         fox.vy = -FOX.jump * 0.55;
         fox.vx = fox.facing * fox.speed * 1.4;
         fox.jumpTimer = rand(1.0, 2.0);
+        pushEvent({ kind: 'foxjump', id: fox.id, x: fox.x + fox.w / 2, y: fox.y + fox.h });
       }
     }
   } else {
@@ -348,6 +365,7 @@ function damageFox(fox, amount, shooter) {
     if (shooter) {
       shooter.score += 10;
       shooter.kills++;
+      shooter.lifeKills++;
     }
     pushEvent({ kind: 'kill', id: fox.id, x: fox.x + fox.w / 2, y: fox.y + fox.h / 2, by: shooter ? shooter.id : 0 });
   } else {
@@ -388,6 +406,10 @@ function tick(dt) {
   if (players.size > 0) {
     const wave = currentWave();
     const maxFoxes = 3 + wave * 2 + players.size * 2;
+    if (wave !== announcedWave) {
+      announcedWave = wave;
+      pushEvent({ kind: 'wave', wave, maxFoxes });
+    }
     spawnTimer -= dt;
     if (spawnTimer <= 0 && foxes.size < maxFoxes) {
       spawnFox();
@@ -405,6 +427,7 @@ function snapshot() {
     time: Math.round(gameTime * 1000),
     wave: currentWave(),
     kills: totalKills,
+    maxFoxes: 3 + currentWave() * 2 + players.size * 2,
     players: [...players.values()].map((p) => ({
       id: p.id,
       name: p.name,
@@ -420,7 +443,12 @@ function snapshot() {
       alive: p.alive,
       onGround: p.onGround,
       respawn: p.alive ? 0 : Math.ceil(p.respawnTimer),
+      canRespawn: !p.alive && p.respawnTimer <= PLAYER.respawn - 1,
       inv: p.invulnTimer > 0,
+      survived: Math.round(p.alive ? gameTime - p.spawnedAt : p.lastSurvival || 0),
+      lifeKills: p.lifeKills,
+      best: Math.round(p.bestSurvival),
+      bestKills: p.bestLifeKills,
     })),
     foxes: [...foxes.values()].map((f) => ({
       id: f.id,
@@ -492,7 +520,7 @@ wss.on('connection', (ws) => {
     if (!msg || typeof msg !== 'object') return;
 
     if (msg.t === 'join' && !player) {
-      player = createPlayer(ws, sanitizeName(msg.name));
+      player = createPlayer(ws, sanitizeName(msg.name), msg.outfit);
       ws.send(
         JSON.stringify({
           t: 'welcome',
@@ -514,6 +542,9 @@ wss.on('connection', (ws) => {
       player.input.right = !!msg.right;
       player.input.jump = !!msg.jump;
       player.input.shoot = !!msg.shoot;
+    } else if (msg.t === 'respawn') {
+      // Quick return: allowed once at least a second of the respawn timer has elapsed.
+      if (!player.alive && player.respawnTimer <= PLAYER.respawn - 1) respawnPlayer(player);
     } else if (msg.t === 'ping') {
       ws.send(JSON.stringify({ t: 'pong', ts: msg.ts }));
     }
