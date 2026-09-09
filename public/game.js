@@ -521,7 +521,21 @@ function drawPlatforms(camX, camY) {
 // ---------------------------------------------------------------------------
 // Characters
 // ---------------------------------------------------------------------------
+// Outfit palettes; index 0 is the classic hunter (first player in the forest).
+const OUTFITS = [
+  { jacket: '#2f6b32', trim: '#3f8a42', trousers: '#4b3520', hair: '#6b3d1e', hat: '#3d5a2a', feather: '#d63d3d', skin: '#f2c9a0' },
+  { jacket: '#b8322d', trim: '#d94a44', trousers: '#2c2c3a', hair: '#2b1a10', hat: '#7a1f1c', feather: '#f2d16b', skin: '#f2c9a0' },
+  { jacket: '#2a4f9e', trim: '#3a6bd1', trousers: '#3b2a1a', hair: '#e8c46a', hat: '#1f3a75', feather: '#ffffff', skin: '#f5d5b5' },
+  { jacket: '#6b2f8a', trim: '#8a45ad', trousers: '#26262e', hair: '#1a1a1a', hat: '#4a1f63', feather: '#7fe0a8', skin: '#c9a27a' },
+  { jacket: '#d9772a', trim: '#f09443', trousers: '#4b3520', hair: '#8a2b1a', hat: '#a85a1c', feather: '#2f6b32', skin: '#f2c9a0' },
+  { jacket: '#1f7a7a', trim: '#2a9e9e', trousers: '#2c2c3a', hair: '#d1d1d1', hat: '#145454', feather: '#ffb347', skin: '#e8b98f' },
+  { jacket: '#c9a417', trim: '#e6c02a', trousers: '#3b2a1a', hair: '#5a2d0c', hat: '#8a6f0d', feather: '#2a4f9e', skin: '#f5d5b5' },
+  { jacket: '#c9407a', trim: '#e05b94', trousers: '#26262e', hair: '#3a1f14', hat: '#8f2a55', feather: '#7fd1ff', skin: '#f2c9a0' },
+];
+const outfitOf = (p) => OUTFITS[(p.outfit || 0) % OUTFITS.length];
+
 function drawHunter(p, x, y, time, isMe) {
+  const o = outfitOf(p);
   const w = 30;
   const h = 48;
   const moving = Math.abs(p.vx) > 10 && p.onGround;
@@ -540,25 +554,25 @@ function drawHunter(p, x, y, time, isMe) {
   ctx.ellipse(0, bob, 15, 4, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Legs (brown trousers, boots)
-  ctx.fillStyle = '#4b3520';
+  // Legs (trousers, boots)
+  ctx.fillStyle = o.trousers;
   ctx.fillRect(-9 + swing * 0.5, -20, 7, 18);
   ctx.fillRect(2 - swing * 0.5, -20, 7, 18);
   ctx.fillStyle = '#1f1610';
   ctx.fillRect(-10 + swing * 0.5, -5, 9, 5);
   ctx.fillRect(1 - swing * 0.5, -5, 9, 5);
 
-  // Body (green hunting jacket)
-  ctx.fillStyle = '#2f6b32';
+  // Body (jacket)
+  ctx.fillStyle = o.jacket;
   ctx.fillRect(-10, -38, 20, 20);
-  ctx.fillStyle = '#3f8a42';
+  ctx.fillStyle = o.trim;
   ctx.fillRect(-10, -38, 20, 4);
   // Belt
   ctx.fillStyle = '#7a4f2a';
   ctx.fillRect(-10, -22, 20, 3);
 
   // Arm holding rifle
-  ctx.fillStyle = '#2f6b32';
+  ctx.fillStyle = o.jacket;
   ctx.fillRect(-2, -34, 12, 6);
   // Rifle
   ctx.fillStyle = '#5a3a1f';
@@ -568,10 +582,10 @@ function drawHunter(p, x, y, time, isMe) {
   ctx.fillRect(2, -27, 5, 5);
 
   // Head
-  ctx.fillStyle = '#f2c9a0';
+  ctx.fillStyle = o.skin;
   ctx.fillRect(-7, -52, 14, 14);
-  // Hair (brown ponytail)
-  ctx.fillStyle = '#6b3d1e';
+  // Hair (ponytail)
+  ctx.fillStyle = o.hair;
   ctx.fillRect(-8, -54, 16, 5);
   ctx.fillRect(-9, -52, 3, 9);
   ctx.beginPath();
@@ -584,11 +598,11 @@ function drawHunter(p, x, y, time, isMe) {
   // Eye
   ctx.fillStyle = '#222';
   ctx.fillRect(3, -47, 2, 3);
-  // Hat (hunter's hat with feather)
-  ctx.fillStyle = '#3d5a2a';
+  // Hat with feather
+  ctx.fillStyle = o.hat;
   ctx.fillRect(-10, -58, 20, 6);
   ctx.fillRect(-7, -64, 14, 7);
-  ctx.fillStyle = '#d63d3d';
+  ctx.fillStyle = o.feather;
   ctx.fillRect(4, -63, 6, 2);
 
   ctx.restore();
@@ -756,9 +770,11 @@ function drawHUD(me, snap, dt) {
   ctx.font = '13px "Trebuchet MS", sans-serif';
   sorted.forEach((p, i) => {
     const yy = 48 + i * 18;
+    ctx.fillStyle = outfitOf(p).jacket;
+    ctx.fillRect(VIEW.w - 212, yy - 10, 10, 10);
     ctx.fillStyle = p.id === myId ? '#ffd27f' : p.alive ? '#fff' : '#999';
     ctx.textAlign = 'left';
-    ctx.fillText(`${i + 1}. ${p.name}${p.alive ? '' : ' ✝'}`, VIEW.w - 212, yy);
+    ctx.fillText(`${i + 1}. ${p.name}${p.alive ? '' : ' ✝'}`, VIEW.w - 198, yy);
     ctx.textAlign = 'right';
     ctx.fillText(`${p.score}`, VIEW.w - 24, yy);
   });

@@ -67,6 +67,10 @@ const PLATFORMS = [
   { x: 3000, y: 450, w: 150, h: 18 },
 ];
 
+// Outfits: index 0 is the classic hunter look, reserved for the first player in the forest.
+// Newcomers get the lowest outfit index that nobody online is wearing.
+const OUTFIT_COUNT = 8;
+
 const SPAWN_POINT = { x: WORLD.width / 2 - PLAYER.w / 2, y: WORLD.groundY - PLAYER.h };
 
 // ---------------------------------------------------------------------------
@@ -125,12 +129,19 @@ function stepPhysics(e, dt) {
 // ---------------------------------------------------------------------------
 // Players
 // ---------------------------------------------------------------------------
+function pickOutfit() {
+  const used = new Set([...players.values()].map((p) => p.outfit));
+  for (let i = 0; i < OUTFIT_COUNT; i++) if (!used.has(i)) return i;
+  return players.size % OUTFIT_COUNT;
+}
+
 function createPlayer(ws, name) {
   const id = nextId++;
   const player = {
     id,
     ws,
     name,
+    outfit: pickOutfit(),
     x: SPAWN_POINT.x + rand(-80, 80),
     y: SPAWN_POINT.y,
     vx: 0,
@@ -397,6 +408,7 @@ function snapshot() {
     players: [...players.values()].map((p) => ({
       id: p.id,
       name: p.name,
+      outfit: p.outfit,
       x: Math.round(p.x * 10) / 10,
       y: Math.round(p.y * 10) / 10,
       vx: Math.round(p.vx),
