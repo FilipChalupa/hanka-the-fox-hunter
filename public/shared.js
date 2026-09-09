@@ -241,7 +241,7 @@
   // -------------------------------------------------------------------------
   // Snapshot deltas: only entities/fields that changed since the last snapshot
   // -------------------------------------------------------------------------
-  const COLLECTIONS = ['players', 'foxes', 'bullets', 'pickups', 'fires'];
+  const COLLECTIONS = ['players', 'foxes', 'bullets', 'pickups', 'fires', 'traps', 'lures', 'saplings', 'burning'];
 
   function same(a, b) {
     if (a === b) return true;

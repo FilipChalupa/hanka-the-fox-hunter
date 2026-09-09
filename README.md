@@ -40,6 +40,7 @@ a hrajete spolu.
 | Oživení | drž `E` vedle ducha (3 s, nehýbat se, nestřílet) |
 | Úhyb    | dvojité `A`/`D` (krátký sprint s nezranitelností, cooldown 1 s) |
 | Lezení  | drž `W` ve výskoku u světlého kmene, `S` u paty kmene; `W`/`S` leze, skok do strany seskočí |
+| Použít  | `Q` (past, roh, semínko, světluška, vnadidlo) |
 | Emoty   | `1` 👍, `2` 🆘, `3` 😂, `4` ❤️            |
 | Duch    | `W`/`↑` nahoru, `S`/`↓` dolů             |
 
@@ -68,8 +69,23 @@ nahoře řada emotů.
 - **Vylepšení** padají z lišek (8 %, z mega lišky 60 %) a občas se objeví na
   plošinách: lékárnička (+40 HP), brokovnice (3 broky po 9, skoro stejná
   kadence jako puška, 12 s), smrad (10 s: lišky do 190 px se otočí a utíkají
-  pryč, hrabavé se odplazí, mega liška si ho nevšímá), rychlopalba
+  pryč, hrabavé se odplazí, mega liška si ho nevšímá), zápalné náboje (10 s:
+  kulky padají k zemi a kde dopadnou nebo koho trefí, tam vzplane oheň, pálí i
+  kamarády), dvojité body (15 s), liščí převlek (8 s: lišky tě ignorují, ale
+  nemůžeš střílet), rychlopalba
   (10 s), rychlé nohy (12 s).
+- **Držené předměty** se sbírají do ruky a používají klávesou `Q` (na mobilu
+  tlačítko „použít“): past (položí se na zem, první liška se chytí na 3 s a
+  nemůže kousat, musíš ji dojít dorazit), lovecký roh (všechny lišky na mapě
+  na 4 s zamíří k tobě), semínko (za 5 s vyroste nový lezecký kmen, ne blíž
+  než 160 px od jiného kmene nebo nory), světluška v lahvi (20 s láká lišky
+  k sobě a v mlze osvítí dvojnásobný kruh), vnadidlo (8 s: lišky se seběhnou
+  a perou se u masa). Nový držený předmět nahradí starý.
+- **Prokletí**: některá bedýnka vypadá jako obyčejná, ale po sebrání vyskočí
+  zpod hráče hrabavá liška.
+- **Hořící stromy**: oheň u paty lezeckého kmene ho zapálí. Kdo na něm leze
+  nebo stojí v koruně, hoří; po 6 s strom shoří i s plošinami. Déšť hoření
+  zpomalí na polovinu.
 - **Střet střel**: když se kulky dvou lovců potkají, zruší se, zableskne a na
   zemi vzplane oheň na 6 s. Pálí lovce i lišky; lišky se mu vyhýbají.
 - Les (plošiny, stromy, dekorace) se generuje znovu každé kolo. Světlé kmeny

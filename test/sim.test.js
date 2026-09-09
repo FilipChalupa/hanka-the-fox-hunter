@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { Game, PLAYER, DEN, FIRE } = require('../game/sim.js');
+const { Game, PLAYER, DEN, FIRE, TRAP, HORN, SEED: SEED_CFG, TREE_BURN } = require('../game/sim.js');
 const Shared = require('../public/shared.js');
 const { WORLD, encodeDelta, applyDelta } = Shared;
 
@@ -347,4 +347,199 @@ test('storm lightning strikes foxes', () => {
   const strike = events.find((e) => e.kind === 'lightning');
   assert.ok(strike);
   if (strike.hit === fox.id) assert.ok(fox.hp < fox.maxHp || !game.foxes.has(fox.id));
+});
+
+let giveId = 9000;
+function give(game, p, kind) {
+  const id = giveId++;
+  game.pickups.set(id, { id, kind, look: kind, x: p.x, y: p.y, w: 22, h: 22, life: 10 });
+  run(game, 1 / 30);
+}
+
+test('a placed trap catches the first fox that steps on it for 3 seconds', () => {
+  const game = mk();
+  const a = game.addPlayer({ name: 'A' });
+  place(a, 1500);
+  give(game, a, 'trap');
+  assert.equal(a.item, 'trap');
+  game.setInput(a.id, input({ use: true }));
+  run(game, 0.1);
+  assert.equal(a.item, null);
+  assert.equal(game.traps.size, 1);
+  const fox = game.spawnFox('normal');
+  fox.x = 1700;
+  fox.y = WORLD.groundY - fox.h;
+  place(a, 1300);
+  const events = run(game, 2.5);
+  assert.ok(events.some((e) => e.kind === 'trap' && e.fox === fox.id), 'fox trapped');
+  assert.equal(game.traps.size, 0, 'trap is used up');
+  const xAt = fox.x;
+  run(game, 1);
+  assert.equal(Math.round(fox.x), Math.round(xAt), 'trapped fox does not move');
+  assert.equal(a.hp, PLAYER.hp, 'a trapped fox cannot bite');
+  run(game, TRAP.hold + 0.5);
+  assert.ok(fox.trapped <= 0, 'free again');
+  assert.ok(Math.abs(fox.x - a.x) < 80, `back on the hunter: ${fox.x} vs ${a.x}`);
+});
+
+test('incendiary rounds set the ground on fire where they land', () => {
+  const game = mk();
+  const a = game.addPlayer({ name: 'A' });
+  place(a, 1000);
+  a.facing = 1;
+  give(game, a, 'incendiary');
+  assert.ok(a.incTimer > 9);
+  game.setInput(a.id, input({ shoot: true }));
+  const events = run(game, 1.2);
+  assert.ok(events.some((e) => e.kind === 'ignite'), 'ignite event');
+  assert.ok(game.fires.size >= 1, 'fire on the ground');
+  const fire = [...game.fires.values()][0];
+  assert.ok(fire.x > 1000 && fire.x < 1900, `fire lands ahead: ${fire.x}`);
+  assert.equal(fire.y, WORLD.groundY);
+});
+
+test('the hunting horn draws every fox to the hunter who blew it', () => {
+  const game = mk();
+  const a = game.addPlayer({ name: 'A' });
+  const b = game.addPlayer({ name: 'B' });
+  place(a, 400);
+  place(b, 2600);
+  const fox = game.spawnFox('normal');
+  fox.x = 2400;
+  fox.y = WORLD.groundY - fox.h;
+  run(game, 0.3);
+  assert.ok(fox.vx > 0, 'fox heads for the nearer hunter B');
+  give(game, a, 'horn');
+  game.setInput(a.id, input({ use: true }));
+  const events = run(game, 0.5);
+  assert.ok(events.some((e) => e.kind === 'horn' && e.id === a.id));
+  assert.ok(fox.vx < 0, 'fox turned towards A after the horn');
+  run(game, HORN.duration);
+  assert.ok(fox.vx > 0, 'after the horn fades the fox goes for the nearer hunter again');
+});
+
+test('a seed grows into a climbable trunk with canopy and branch', () => {
+  const game = mk();
+  const a = game.addPlayer({ name: 'A' });
+  const x = 1560;
+  place(a, x - PLAYER.w / 2);
+  const before = game.world.trunks.length;
+  give(game, a, 'seed');
+  game.setInput(a.id, input({ use: true }));
+  let events = run(game, 0.1);
+  assert.ok(events.some((e) => e.kind === 'seed'), 'planted');
+  events = run(game, SEED_CFG.grow + 0.2);
+  const grown = events.find((e) => e.kind === 'treegrown');
+  assert.ok(grown, 'tree grew');
+  assert.equal(game.world.trunks.length, before + 1);
+  assert.ok(game.world.platforms.some((pl) => pl.canopy && pl.trunk === grown.trunk.id));
+  assert.equal(grown.trunk.x, x);
+  // Too close to an existing trunk: cannot plant, keeps the seed
+  const t0 = game.world.trunks[0];
+  place(a, t0.x + 40);
+  give(game, a, 'seed');
+  game.setInput(a.id, input({ use: true }));
+  events = run(game, 0.1);
+  assert.ok(events.some((e) => e.kind === 'noplant'));
+  assert.equal(a.item, 'seed');
+});
+
+test('bait gathers foxes into a scuffle instead of attacking hunters', () => {
+  const game = mk();
+  const a = game.addPlayer({ name: 'A' });
+  place(a, 1500);
+  give(game, a, 'bait');
+  game.setInput(a.id, input({ use: true }));
+  run(game, 0.1);
+  place(a, 1100);
+  const foxes = [game.spawnFox('normal'), game.spawnFox('normal')];
+  foxes[0].x = 1700;
+  foxes[1].x = 1800;
+  for (const f of foxes) f.y = WORLD.groundY - f.h;
+  run(game, 3);
+  for (const f of foxes) assert.ok(Math.abs(f.x + f.w / 2 - 1515) < 60, `fox at the bait: ${f.x}`);
+  assert.equal(a.hp, PLAYER.hp, 'hunter left alone');
+  const events = run(game, 6);
+  assert.ok(events.some((e) => e.kind === 'lureend' && e.item === 'bait'), 'bait eaten');
+  assert.equal(game.lures.size, 0);
+});
+
+test('a rifle shot on flat ground hits even the small fast fox', () => {
+  const game = mk();
+  const a = game.addPlayer({ name: 'A' });
+  place(a, 1000);
+  a.facing = 1;
+  const fox = game.spawnFox('fast');
+  fox.x = 1200;
+  fox.y = WORLD.groundY - fox.h;
+  fox.stun = 5;
+  game.setInput(a.id, input({ shoot: true }));
+  const events = run(game, 0.5);
+  assert.ok(events.some((e) => e.kind === 'hit' || e.kind === 'kill'), 'fast fox got hit');
+});
+
+test('double points doubles the score of kills for a while', () => {
+  const game = mk();
+  const a = game.addPlayer({ name: 'A' });
+  place(a, 1000);
+  a.facing = 1;
+  give(game, a, 'double');
+  const fox = game.spawnFox('fast');
+  fox.x = 1200;
+  fox.y = WORLD.groundY - fox.h;
+  fox.hp = 1;
+  fox.vx = 0;
+  fox.stun = 5;
+  game.setInput(a.id, input({ shoot: true }));
+  const events = run(game, 0.5);
+  const kill = events.find((e) => e.kind === 'kill');
+  assert.ok(kill && kill.score === 30, `fast fox worth 15 doubled: ${kill && kill.score}`);
+  assert.equal(a.score, 30);
+});
+
+test('a disguised hunter is ignored by foxes and cannot shoot', () => {
+  const game = mk();
+  const a = game.addPlayer({ name: 'A' });
+  place(a, 1500);
+  give(game, a, 'disguise');
+  const fox = game.spawnFox('normal');
+  fox.x = 1560;
+  fox.y = WORLD.groundY - fox.h;
+  game.setInput(a.id, input({ shoot: true }));
+  const events = run(game, 2);
+  assert.equal(events.filter((e) => e.kind === 'shoot').length, 0, 'no shots in disguise');
+  assert.equal(a.hp, PLAYER.hp, 'foxes ignore the disguise');
+  assert.ok(!events.some((e) => e.kind === 'bite'));
+});
+
+test('a cursed crate looks ordinary and unleashes a digger under the hunter', () => {
+  const game = mk();
+  const a = game.addPlayer({ name: 'A' });
+  place(a, 1500);
+  game.pickups.set(1, { id: 1, kind: 'curse', look: 'medkit', x: a.x, y: a.y, w: 22, h: 22, life: 10 });
+  assert.equal(game.snapshot().pickups[0].kind, 'medkit', 'clients only see the disguise');
+  const events = run(game, 0.2);
+  assert.ok(events.some((e) => e.kind === 'curse' && e.id === a.id));
+  const digger = [...game.foxes.values()].find((f) => f.kind === 'digger');
+  assert.ok(digger && !digger.dug, 'digger is out');
+  assert.ok(Math.abs(digger.x + digger.w / 2 - (a.x + a.w / 2)) < 30, 'right under the hunter');
+});
+
+test('fire at the foot of a climbable tree burns it down after a few seconds', () => {
+  const game = mk();
+  const a = game.addPlayer({ name: 'A' });
+  const trunk = game.world.trunks[0];
+  const id = trunk.id;
+  place(a, trunk.x - PLAYER.w / 2, trunk.top - PLAYER.h);
+  game.spawnFire(trunk.x + 20, WORLD.groundY - 10);
+  let events = run(game, 0.2);
+  assert.ok(events.some((e) => e.kind === 'treefire' && e.id === id), 'tree caught fire');
+  run(game, 1.2);
+  assert.ok(a.hp < PLAYER.hp, 'standing in the burning canopy hurts');
+  events = run(game, TREE_BURN.time);
+  assert.ok(events.some((e) => e.kind === 'treeburnt' && e.id === id), 'tree burnt down');
+  assert.ok(!game.world.trunks.some((t) => t.id === id));
+  assert.ok(!game.world.platforms.some((pl) => pl.trunk === id), 'its platforms are gone');
+  run(game, 1.5);
+  assert.ok(a.y + a.h > trunk.top + 100 || !a.alive, 'the hunter fell');
 });
