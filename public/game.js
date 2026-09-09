@@ -2511,13 +2511,6 @@ function frame(realNow) {
       ctx.fillStyle = 'rgba(255,200,140,0.85)';
       ctx.fillText('při lezení nejde střílet', me.rx + 15 - camX, me.ry - camY - 34);
     }
-    const trunk = S.trunkAt(world.trunks, { x: me.rx, y: me.ry, w: 30, h: 48 });
-    if (trunk && !me.climbing && me.onGround) {
-      ctx.font = `700 10px ${FONT_BODY}`;
-      ctx.textAlign = 'center';
-      ctx.fillStyle = 'rgba(255,240,200,0.8)';
-      ctx.fillText('drž W ve výskoku = lezení', me.rx + 15 - camX, me.ry - camY - 34);
-    }
   }
 
   for (let i = particles.length - 1; i >= 0; i--) {
