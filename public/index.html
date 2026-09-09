@@ -269,6 +269,7 @@
     #tJump { right: calc(max(16px, env(safe-area-inset-right)) + 100px); bottom: max(28px, env(safe-area-inset-bottom)); }
     #tRevive { right: max(16px, env(safe-area-inset-right)); bottom: calc(max(16px, env(safe-area-inset-bottom)) + 100px); width: 60px; height: 60px; font-size: 0.65rem; }
     #tDash { right: calc(max(16px, env(safe-area-inset-right)) + 100px); bottom: calc(max(16px, env(safe-area-inset-bottom)) + 110px); width: 60px; height: 60px; font-size: 0.65rem; }
+    #tUse { right: calc(max(16px, env(safe-area-inset-right)) + 184px); bottom: max(28px, env(safe-area-inset-bottom)); width: 60px; height: 60px; font-size: 0.65rem; }
     #emotes {
       position: absolute;
       top: calc(max(8px, env(safe-area-inset-top)) + 52px);
@@ -297,6 +298,7 @@
     <div class="tbtn" id="tShoot" data-key="shoot"><span>✦</span>střelba</div>
     <div class="tbtn" id="tRevive" data-key="revive"><span>✚</span>oživit</div>
     <div class="tbtn" id="tDash" data-key="dash"><span>»</span>úhyb</div>
+    <div class="tbtn" id="tUse" data-key="use"><span>✋</span>použít</div>
     <div id="emotes">
       <button data-emote="1">👍</button>
       <button data-emote="2">🆘</button>
@@ -340,7 +342,7 @@
 
       <div class="controls">
         <kbd>A</kbd>/<kbd>D</kbd> pohyb · <kbd>W</kbd>/<kbd>Space</kbd> skok · <kbd>Shift</kbd>/<kbd>F</kbd>/<kbd>X</kbd>/<kbd>J</kbd>/<kbd>K</kbd> střelba<br />
-        <kbd>E</kbd> drž u ducha 3 s = oživení (10 HP) · <kbd>A A</kbd>/<kbd>D D</kbd> úhyb<br />
+        <kbd>E</kbd> drž u ducha 3 s = oživení (10 HP) · <kbd>A A</kbd>/<kbd>D D</kbd> úhyb · <kbd>Q</kbd> použít předmět<br />
         Světlé kmeny jde lézt: drž <kbd>W</kbd> ve výskoku · <kbd>1</kbd>–<kbd>4</kbd> emoty · kulky zraní i kamarády
       </div>
     </div>

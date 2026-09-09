@@ -45,6 +45,7 @@ let inputSeq = 0;
 const inputHistory = [];
 let renderOff = { x: 0, y: 0 };
 let pendingDash = 0;
+let pendingUse = false;
 let lastInputSent = 0;
 let lastInputKey = '';
 
@@ -59,6 +60,7 @@ const leaves = [];
 const rainDrops = [];
 const anims = new Map();
 const emoteBubbles = new Map();
+const hornRings = [];
 let shake = 0;
 let hitStop = 0;
 let hurtFlash = 0;
@@ -83,6 +85,15 @@ const PICKUP_INFO = {
   rapid: { label: 'Rychlopalba', icon: '⚡', color: '#ffe066' },
   speed: { label: 'Rychlé nohy', icon: '»', color: '#7fe0a8' },
   stink: { label: 'Smrad', icon: '☁', color: '#9fd66b' },
+  incendiary: { label: 'Zápalné náboje', icon: '✹', color: '#ff8c42' },
+  double: { label: 'Dvojité body', icon: '×2', color: '#ffd27f' },
+  disguise: { label: 'Liščí převlek', icon: 'ᗢ', color: '#e0561f' },
+  trap: { label: 'Past', icon: '⌗', color: '#c9c9c9', held: true, hint: 'polož past' },
+  horn: { label: 'Lovecký roh', icon: '♪', color: '#d9b44a', held: true, hint: 'zatrub' },
+  seed: { label: 'Semínko', icon: '❀', color: '#7fe0a8', held: true, hint: 'zasaď strom' },
+  lantern: { label: 'Světluška', icon: '✺', color: '#d6ff78', held: true, hint: 'postav lucernu' },
+  bait: { label: 'Vnadidlo', icon: '♨', color: '#e07a5f', held: true, hint: 'polož maso' },
+  curse: { label: 'Prokletí!', icon: '☠', color: '#c9b3ff' },
 };
 const WEATHER_INFO = {
   clear: { label: '', icon: '' },
@@ -292,6 +303,24 @@ const SFX = {
     playTone({ type: 'sine', from: 80, to: 30, dur: 1.2, gain: 0.1 });
   },
   rubble: () => playTone({ noise: true, from: 600, to: 60, dur: 0.6, gain: 0.12 }),
+  horn: () => {
+    playTone({ type: 'sawtooth', from: 220, to: 230, dur: 0.5, gain: 0.09 });
+    playTone({ type: 'sawtooth', from: 330, to: 340, dur: 0.6, gain: 0.09, delay: 0.45 });
+    playTone({ type: 'sawtooth', from: 440, to: 430, dur: 0.9, gain: 0.1, delay: 1.0 });
+  },
+  snap: () => {
+    playTone({ noise: true, from: 2500, to: 300, dur: 0.08, gain: 0.12 });
+    playTone({ type: 'square', from: 500, to: 150, dur: 0.1, gain: 0.06 });
+  },
+  place: () => playTone({ noise: true, from: 500, to: 150, dur: 0.12, gain: 0.05 }),
+  grow: () => {
+    playTone({ type: 'sine', from: 300, to: 600, dur: 0.4, gain: 0.05 });
+    playTone({ type: 'sine', from: 450, to: 900, dur: 0.5, gain: 0.05, delay: 0.2 });
+  },
+  curse: () => {
+    playTone({ type: 'sawtooth', from: 200, to: 60, dur: 0.7, gain: 0.12 });
+    playTone({ type: 'square', from: 90, to: 40, dur: 0.6, gain: 0.08, delay: 0.1 });
+  },
   pop: () => playTone({ type: 'sine', from: 900, to: 300, dur: 0.08, gain: 0.05 }),
 };
 
@@ -307,6 +336,7 @@ const KEYMAP = {
   // Ctrl is deliberately not a shoot key: Ctrl+W (shoot + jump) would close the tab.
   ShiftLeft: 'shoot', ShiftRight: 'shoot', KeyF: 'shoot', KeyX: 'shoot', KeyJ: 'shoot', KeyK: 'shoot',
   KeyE: 'revive',
+  KeyQ: 'use',
 };
 const EMOTE_KEYS = { Digit1: 1, Digit2: 2, Digit3: 3, Digit4: 4, Numpad1: 1, Numpad2: 2, Numpad3: 3, Numpad4: 4 };
 const lastTap = { left: 0, right: 0 };
@@ -316,12 +346,12 @@ function send(obj) {
 }
 
 function currentInput() {
-  return { left: input.left, right: input.right, jump: input.jump, down: input.down, shoot: input.shoot, revive: input.revive, dash: pendingDash };
+  return { left: input.left, right: input.right, jump: input.jump, down: input.down, shoot: input.shoot, revive: input.revive, dash: pendingDash, use: pendingUse };
 }
 
 function sendInput(force) {
   if (!myId) return;
-  const key = `${input.left}${input.right}${input.jump}${input.shoot}${input.down}${input.revive}${pendingDash}`;
+  const key = `${input.left}${input.right}${input.jump}${input.shoot}${input.down}${input.revive}${pendingDash}${pendingUse}`;
   const now = performance.now();
   if (!force && key === lastInputKey && now - lastInputSent < 50) return;
   lastInputKey = key;
@@ -344,6 +374,10 @@ window.addEventListener('keydown', (e) => {
     const now = performance.now();
     if (now - lastTap[action] < 260) requestDash(action === 'right' ? 1 : -1);
     lastTap[action] = now;
+  }
+  if (action === 'use') {
+    pendingUse = true;
+    return;
   }
   if (!input[action]) {
     input[action] = true;
@@ -404,12 +438,13 @@ if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
       ensureAudio();
       btn.classList.add('active');
       if (key === 'dash') requestDash(pred.facing || 1);
+      else if (key === 'use') pendingUse = true;
       else input[key] = true;
     };
     const off = (e) => {
       e.preventDefault();
       btn.classList.remove('active');
-      if (key !== 'dash') input[key] = false;
+      if (key !== 'dash' && key !== 'use') input[key] = false;
     };
     btn.addEventListener('pointerdown', on);
     btn.addEventListener('pointerup', off);
@@ -582,8 +617,9 @@ function predictStep(dt) {
       if (h === 'land') SFX.land();
     }
   } else S.moveGhost(pred, inp, dt);
-  sendInput(pendingDash !== 0);
+  sendInput(pendingDash !== 0 || pendingUse);
   pendingDash = 0;
+  pendingUse = false;
   // Error smoothing: the render offset melts away over ~100 ms
   const k = Math.min(1, dt * 12);
   renderOff.x -= renderOff.x * k;
@@ -733,6 +769,69 @@ function handleEvents(events) {
         else SFX.shoot();
         break;
       }
+      case 'ignite':
+        burst(ev.x, ev.fireY, 10, { colors: ['#ffd27f', '#ff8c42', '#ffffff'], minSpeed: 30, maxSpeed: 160, life: 0.4, size: 3, gravity: 100 });
+        flashes.push({ x: ev.x, y: ev.fireY - 10, r: 120, t: 0.2, maxT: 0.2, color: '255,200,120' });
+        break;
+      case 'place':
+        dust(ev.x, ev.y, 5);
+        SFX.place();
+        break;
+      case 'trap':
+        burst(ev.x, ev.y, 10, { colors: ['#c9c9c9', '#8a8a8a', '#e0561f'], minSpeed: 40, maxSpeed: 180, life: 0.5, size: 3 });
+        floatingTexts.push({ x: ev.x, y: ev.y - 40, text: 'Chycena!', color: '#c9c9c9', life: 1.2, size: 13 });
+        SFX.snap();
+        break;
+      case 'horn':
+        hornRings.push({ x: ev.x, y: ev.y, t: 0 });
+        addFeed(`📯 ${playerName(ev.id)} zatroubil(a) na roh, lišky se sbíhají!`, '#d9b44a');
+        shake = Math.max(shake, 3);
+        SFX.horn();
+        break;
+      case 'seed':
+        burst(ev.x, ev.y, 8, { colors: ['#6b4726', '#7fe0a8'], minSpeed: 20, maxSpeed: 80, life: 0.5, size: 3, up: 40 });
+        SFX.place();
+        break;
+      case 'noplant':
+        floatingTexts.push({ x: ev.x, y: ev.y - 10, text: 'Tady strom nevyroste', color: '#ffb3a7', life: 1.2, size: 12 });
+        break;
+      case 'treegrown':
+        if (ev.trunk && !world.trunks.some((t) => t.id === ev.trunk.id)) {
+          world.trunks.push(ev.trunk);
+          world.platforms.push(...(ev.platforms || []));
+        }
+        spawnLeafBurst(ev.x, ev.y, 20);
+        burst(ev.x, ev.y + 60, 16, { colors: ['#7fe0a8', '#3f9a5a', '#fff6c2'], minSpeed: 30, maxSpeed: 160, life: 0.8, gravity: -40, round: true });
+        addFeed('🌳 Vyrostl nový strom!', '#7fe0a8');
+        shake = Math.max(shake, 4);
+        SFX.grow();
+        break;
+      case 'treefire':
+        addFeed('🔥 Strom hoří! Slez dolů.', '#ffb347');
+        SFX.rubble();
+        break;
+      case 'treeburnt': {
+        const idx = world.trunks.findIndex((t) => t.id === ev.id);
+        if (idx >= 0) world.trunks.splice(idx, 1);
+        world.platforms = world.platforms.filter((pl) => pl.trunk !== ev.id);
+        burst(ev.x, ev.y + 100, 40, { colors: ['#3b2a1a', '#5e6a66', '#ff8c42', '#222'], minSpeed: 40, maxSpeed: 260, life: 1.2, size: 6, up: 120 });
+        shake = Math.max(shake, 8);
+        addFeed('🪵 Strom shořel na popel.', '#a08c78');
+        SFX.rubble();
+        break;
+      }
+      case 'curse':
+        burst(ev.x, ev.y, 26, { colors: ['#c9b3ff', '#7a4fd1', '#3b2a1a'], minSpeed: 40, maxSpeed: 240, life: 0.8, size: 5, up: 120 });
+        if (ev.id === myId) {
+          shake = 12;
+          hurtFlash = 0.6;
+          floatingTexts.push({ x: ev.x, y: ev.y - 60, text: 'PROKLETÍ!', color: '#c9b3ff', life: 1.5, size: 18 });
+        }
+        SFX.curse();
+        break;
+      case 'lureend':
+        burst(ev.x, ev.y, 8, { colors: ['#e07a5f', '#d6ff78'], minSpeed: 20, maxSpeed: 80, life: 0.5, size: 3, up: 30 });
+        break;
       case 'clash':
         burst(ev.x, ev.y, 26, { colors: ['#fff6c2', '#ffd27f', '#ff8c42', '#ffffff'], minSpeed: 60, maxSpeed: 320, life: 0.6, size: 4, gravity: 200 });
         flashes.push({ x: ev.x, y: ev.y, r: 260, t: 0.35, maxT: 0.35, color: '255,240,200' });
@@ -746,6 +845,7 @@ function handleEvents(events) {
         if (ev.by === myId) floatingTexts.push({ x: ev.x, y: ev.y - 16, text: 'Kamarád!', color: '#ffb3a7', life: 0.9, size: 12 });
         break;
       case 'pickup': {
+        if (ev.item === 'curse') break;
         const info = PICKUP_INFO[ev.item] || { label: ev.item, color: '#fff' };
         burst(ev.x, ev.y, 14, { colors: [info.color, '#ffffff'], minSpeed: 30, maxSpeed: 160, life: 0.6, gravity: -60, round: true });
         flashes.push({ x: ev.x, y: ev.y, r: 120, t: 0.4, maxT: 0.4, color: '255,255,220' });
@@ -1113,12 +1213,13 @@ function drawBackground(g, time, wave, weather) {
 }
 
 // Climbable trunks: pale bark with notches, a big canopy up top
-function drawTrunk(g, t, time) {
+function drawTrunk(g, t, time, burn) {
   const x = t.x - camX;
   const top = t.top - camY;
   const bottom = t.bottom - camY;
   if (x < -120 || x > CAM.w + 120) return;
   const h = bottom - top;
+  const char = burn ? 1 - burn.k : 0; // 0 = fresh, 1 = about to fall
   g.fillStyle = '#4a3320';
   g.beginPath();
   g.moveTo(x - 30, bottom + 2);
@@ -1128,9 +1229,10 @@ function drawTrunk(g, t, time) {
   g.closePath();
   g.fill();
   const bark = g.createLinearGradient(x - 14, 0, x + 14, 0);
-  bark.addColorStop(0, '#6f4a2b');
-  bark.addColorStop(0.5, '#b08a5c');
-  bark.addColorStop(1, '#5c3c22');
+  const mix = (c1, c2) => (char ? c2 : c1);
+  bark.addColorStop(0, mix('#6f4a2b', '#2a1a10'));
+  bark.addColorStop(0.5, mix('#b08a5c', '#4a3320'));
+  bark.addColorStop(1, mix('#5c3c22', '#1f130a'));
   g.fillStyle = bark;
   g.fillRect(x - 14, top + 6, 28, h - 6);
   // Bark rings and knots in world coordinates, so they stay put when the camera moves
@@ -1144,19 +1246,142 @@ function drawTrunk(g, t, time) {
   g.fillStyle = 'rgba(255,240,200,0.18)';
   g.fillRect(x - 10, top + 6, 3, h - 6);
   const sway = Math.sin(time * 0.6 + t.x * 0.01) * 4;
-  g.fillStyle = '#255f3a';
+  const shrink = 1 - char * 0.6;
+  g.fillStyle = char ? '#3a2a20' : t.planted ? '#2a6b3f' : '#255f3a';
   g.beginPath();
-  g.ellipse(x + sway, top - 30, 98, 46, 0, 0, Math.PI * 2);
+  g.ellipse(x + sway, top - 30, 98 * shrink, 46 * shrink, 0, 0, Math.PI * 2);
   g.fill();
-  g.fillStyle = '#2f7a48';
+  g.fillStyle = char ? '#4a3a2a' : t.planted ? '#358a52' : '#2f7a48';
   g.beginPath();
-  g.ellipse(x - 30 + sway, top - 44, 60, 36, 0, 0, Math.PI * 2);
-  g.ellipse(x + 40 + sway, top - 40, 56, 32, 0, 0, Math.PI * 2);
+  g.ellipse(x - 30 + sway, top - 44, 60 * shrink, 36 * shrink, 0, 0, Math.PI * 2);
+  g.ellipse(x + 40 + sway, top - 40, 56 * shrink, 32 * shrink, 0, 0, Math.PI * 2);
   g.fill();
+  g.fillStyle = char ? '#5a4a3a' : '#3f9a5a';
+  g.beginPath();
+  g.ellipse(x + 10 + sway, top - 58, 46 * shrink, 24 * shrink, 0, 0, Math.PI * 2);
+  g.fill();
+  if (burn) {
+    // Flames licking up the trunk and through the crown
+    for (let i = 0; i < 12; i++) {
+      const fy = bottom - 10 - i * (h / 12) - Math.sin(time * 7 + i) * 6;
+      const fh = 18 + Math.sin(time * 9 + i * 1.7) * 8;
+      const fx = x + Math.sin(time * 3 + i * 2) * 10;
+      const grd = g.createLinearGradient(0, fy, 0, fy - fh);
+      grd.addColorStop(0, 'rgba(255,120,30,0.9)');
+      grd.addColorStop(1, 'rgba(255,230,150,0)');
+      g.fillStyle = grd;
+      g.beginPath();
+      g.moveTo(fx - 8, fy);
+      g.quadraticCurveTo(fx, fy - fh * 0.6, fx + Math.sin(time * 11 + i) * 4, fy - fh);
+      g.quadraticCurveTo(fx + 4, fy - fh * 0.5, fx + 8, fy);
+      g.fill();
+    }
+    fireGlows.push({ x: t.x, y: t.top + 60, r: 220, a: 0.3 });
+    fireGlows.push({ x: t.x, y: t.bottom - 60, r: 160, a: 0.25 });
+    // Smoke
+    for (let i = 0; i < 3; i++) {
+      const k = (time * 0.5 + i * 0.33) % 1;
+      g.fillStyle = `rgba(60,50,45,${0.35 * (1 - k)})`;
+      g.beginPath();
+      g.arc(x + Math.sin(k * 6 + i) * 20, top - 60 - k * 90, 10 + k * 18, 0, Math.PI * 2);
+      g.fill();
+    }
+  }
+}
+
+function drawSapling(g, sp, time) {
+  const x = sp.x - camX;
+  const y = S.WORLD.groundY - camY;
+  if (x < -60 || x > CAM.w + 60) return;
+  const k = sp.k;
+  const h = 10 + k * 90;
+  g.strokeStyle = '#6f4a2b';
+  g.lineWidth = 2 + k * 6;
+  g.beginPath();
+  g.moveTo(x, y);
+  g.lineTo(x + Math.sin(time * 2) * 2, y - h);
+  g.stroke();
   g.fillStyle = '#3f9a5a';
+  for (let i = 0; i < 3; i++) {
+    const ly = y - h * (0.5 + i * 0.22);
+    g.beginPath();
+    g.ellipse(x + (i % 2 ? 10 : -10) * (0.5 + k), ly, 10 * (0.5 + k), 5 * (0.5 + k), (i % 2 ? -0.5 : 0.5), 0, Math.PI * 2);
+    g.fill();
+  }
+  g.fillStyle = 'rgba(0,0,0,0.5)';
+  g.fillRect(x - 14, y - h - 16, 28, 4);
+  g.fillStyle = '#7fe0a8';
+  g.fillRect(x - 14, y - h - 16, 28 * k, 4);
+}
+
+function drawTrap(g, tr, time) {
+  const x = tr.x - camX;
+  const y = tr.y - camY;
+  if (x < -40 || x > CAM.w + 40) return;
+  g.fillStyle = tr.armed ? '#9a9a9a' : '#6a6a6a';
+  g.fillRect(x, y + 4, 30, 4);
+  g.strokeStyle = '#c9c9c9';
+  g.lineWidth = 2;
   g.beginPath();
-  g.ellipse(x + 10 + sway, top - 58, 46, 24, 0, 0, Math.PI * 2);
-  g.fill();
+  g.arc(x + 15, y + 5, 14, Math.PI, Math.PI * 1.5 + (tr.armed ? 0 : 0.3));
+  g.arc(x + 15, y + 5, 14, Math.PI * 1.5 - (tr.armed ? 0 : 0.3), 0);
+  g.stroke();
+  g.fillStyle = '#e8e8e8';
+  for (let i = 0; i < 5; i++) g.fillRect(x + 3 + i * 6, y - 2 - (i % 2) * 2, 2, 5);
+  if (tr.armed && Math.sin(time * 6) > 0.7) {
+    g.fillStyle = 'rgba(255,255,255,0.5)';
+    g.fillRect(x + 13, y - 4, 4, 2);
+  }
+}
+
+function drawLure(g, l, time) {
+  const x = l.x - camX;
+  const y = l.y - camY;
+  if (x < -60 || x > CAM.w + 60) return;
+  if (l.kind === 'bait') {
+    g.fillStyle = '#c94a3a';
+    g.beginPath();
+    g.ellipse(x + 12, y + 6, 12, 5, 0, 0, Math.PI * 2);
+    g.fill();
+    g.fillStyle = '#f3ecd8';
+    g.fillRect(x + 20, y + 3, 6, 3);
+    g.fillStyle = '#e07a5f';
+    g.beginPath();
+    g.ellipse(x + 10, y + 4, 7, 3, 0, 0, Math.PI * 2);
+    g.fill();
+    // Scent wisps
+    for (let i = 0; i < 3; i++) {
+      const t = (time * 0.7 + i * 0.33) % 1;
+      g.globalAlpha = (1 - t) * 0.5;
+      g.strokeStyle = '#ffd9b3';
+      g.lineWidth = 1.5;
+      g.beginPath();
+      g.moveTo(x + 6 + i * 6, y - t * 20);
+      g.quadraticCurveTo(x + 10 + i * 6, y - 6 - t * 20, x + 6 + i * 6, y - 12 - t * 20);
+      g.stroke();
+    }
+    g.globalAlpha = 1;
+  } else {
+    // Firefly lantern: a small jar with a glowing dot
+    g.fillStyle = 'rgba(200,230,255,0.35)';
+    roundRect(g, x, y, 16, 18, 4);
+    g.fill();
+    g.strokeStyle = '#c9c9c9';
+    g.lineWidth = 1.5;
+    g.stroke();
+    g.fillStyle = '#8a5a30';
+    g.fillRect(x + 2, y - 3, 12, 4);
+    const pulse = 0.6 + 0.4 * Math.sin(time * 5 + l.id);
+    g.fillStyle = `rgba(214,255,120,${pulse})`;
+    g.beginPath();
+    g.arc(x + 8 + Math.sin(time * 3) * 3, y + 10 + Math.cos(time * 2.3) * 3, 2.5, 0, Math.PI * 2);
+    g.fill();
+    fireGlows.push({ x: l.x + 8, y: l.y + 8, r: 170, a: 0.25 * pulse, green: true });
+  }
+  g.font = `700 9px ${FONT_BODY}`;
+  g.textAlign = 'center';
+  g.fillStyle = 'rgba(255,255,255,0.6)';
+  tabText(g, `${l.life} s`, x + (l.kind === 'bait' ? 12 : 8), y - 6, 'center');
 }
 
 function drawDecor(g, d, x, y) {
@@ -1443,8 +1668,9 @@ function drawLights(g, playersR) {
     const cx = f.x - camX;
     const cy = f.y - camY;
     const grd = g.createRadialGradient(cx, cy, 6, cx, cy, f.r);
-    grd.addColorStop(0, `rgba(255,150,60,${f.a})`);
-    grd.addColorStop(1, 'rgba(255,150,60,0)');
+    const col = f.green ? '190,255,120' : '255,150,60';
+    grd.addColorStop(0, `rgba(${col},${f.a})`);
+    grd.addColorStop(1, `rgba(${col},0)`);
     g.fillStyle = grd;
     g.fillRect(cx - f.r, cy - f.r, f.r * 2, f.r * 2);
   }
@@ -1584,6 +1810,36 @@ function drawHunter(g, p, x, y, time, isMe) {
   const cx = x + 15;
 
   drawShadow(g, p.rx, 30, p.ry + 48);
+  if (p.disguiseT > 0) {
+    // Fox costume: ears on the hat and a bushy tail
+    g.save();
+    g.translate(cx, y + 48 - bob);
+    g.scale(p.facing, 1);
+    g.fillStyle = '#e0561f';
+    g.beginPath();
+    g.moveTo(-9, -62);
+    g.lineTo(-6, -74);
+    g.lineTo(-2, -62);
+    g.closePath();
+    g.fill();
+    g.beginPath();
+    g.moveTo(2, -62);
+    g.lineTo(6, -74);
+    g.lineTo(9, -62);
+    g.closePath();
+    g.fill();
+    g.beginPath();
+    g.moveTo(-10, -20);
+    g.quadraticCurveTo(-30, -26 + Math.sin(time * 4) * 3, -28, -6);
+    g.quadraticCurveTo(-20, -4, -10, -12);
+    g.closePath();
+    g.fill();
+    g.fillStyle = '#fff';
+    g.beginPath();
+    g.arc(-27, -7, 4, 0, Math.PI * 2);
+    g.fill();
+    g.restore();
+  }
   if (p.dash) {
     for (let i = 1; i <= 3; i++) {
       g.save();
@@ -1847,6 +2103,19 @@ function drawFox(g, f, x, y, time) {
   g.scale(1 + a.squash * 0.15, 1 - a.squash * 0.2);
   drawFoxSprite(g, { facing: f.facing, run, air: !f.onGround, bite: a.bite > 0 ? Math.sin((a.bite / 0.25) * Math.PI) : 0, hurt: a.hurt > 0, mega: f.mega, scale, time, kind: f.kind, rot: sniff });
   g.restore();
+  if (f.trapped) {
+    g.strokeStyle = '#c9c9c9';
+    g.lineWidth = 3;
+    g.beginPath();
+    g.arc(x + w / 2, y + h - 2, 16, Math.PI, 0);
+    g.stroke();
+    g.fillStyle = '#e8e8e8';
+    for (let i = 0; i < 5; i++) g.fillRect(x + w / 2 - 12 + i * 6, y + h - 8 - (i % 2) * 2, 2, 5);
+    g.fillStyle = '#c9c9c9';
+    g.font = `900 11px ${FONT_BODY}`;
+    g.textAlign = 'center';
+    g.fillText('✦', x + w / 2 + Math.sin(time * 8) * 12, y - 10);
+  }
   if (f.stun) {
     g.fillStyle = '#ffe066';
     g.font = `900 12px ${FONT_BODY}`;
@@ -2131,7 +2400,7 @@ function drawMinimap(g, snap) {
 }
 
 function drawHUD(g, me, snap, dt) {
-  drawPanel(g, 12, 12, 250, 82);
+  drawPanel(g, 12, 12, 320, 82);
   g.textAlign = 'left';
   g.font = `900 15px ${FONT_TITLE}`;
   g.fillStyle = '#ffd27f';
@@ -2153,15 +2422,29 @@ function drawHUD(g, me, snap, dt) {
     if (me.weapon && me.weapon !== 'rifle') items.push({ info: PICKUP_INFO[me.weapon], t: me.weaponT });
     if (me.speedT > 0) items.push({ info: PICKUP_INFO.speed, t: me.speedT });
     if (me.stinkT > 0) items.push({ info: PICKUP_INFO.stink, t: me.stinkT });
-    items.forEach((it, i) => {
-      const x = 176 + i * 40;
+    if (me.incT > 0) items.push({ info: PICKUP_INFO.incendiary, t: me.incT });
+    if (me.doubleT > 0) items.push({ info: PICKUP_INFO.double, t: me.doubleT });
+    if (me.disguiseT > 0) items.push({ info: PICKUP_INFO.disguise, t: me.disguiseT });
+    items.slice(0, 4).forEach((it, i) => {
+      const x = 172 + i * 38;
       g.fillStyle = 'rgba(0,0,0,0.35)';
-      roundRect(g, x, 62, 36, 22, 4);
+      roundRect(g, x, 62, 35, 22, 4);
       g.fill();
       g.fillStyle = it.info.color;
-      g.font = `900 13px ${FONT_BODY}`;
-      tabText(g, `${it.info.icon}${it.t}`, x + 5, 78);
+      g.font = `900 12px ${FONT_BODY}`;
+      tabText(g, `${it.info.icon}${it.t}`, x + 4, 78);
     });
+    if (me.item && PICKUP_INFO[me.item]) {
+      const info = PICKUP_INFO[me.item];
+      drawPanel(g, 12, 104, 320, 30);
+      g.font = `800 12px ${FONT_BODY}`;
+      g.textAlign = 'left';
+      g.fillStyle = info.color;
+      g.fillText(`${info.icon} ${info.label}`, 24, 124);
+      g.fillStyle = '#f3ecd8';
+      g.textAlign = 'right';
+      g.fillText(`Q: ${info.hint}`, 320, 124);
+    }
     const cd = clamp(1 - pred.dashCd / S.PLAYER.dashCooldown, 0, 1);
     g.fillStyle = 'rgba(0,0,0,0.35)';
     g.fillRect(22, 86, 60, 3);
@@ -2174,11 +2457,11 @@ function drawHUD(g, me, snap, dt) {
 
   if (snap.weather && snap.weather.kind !== 'clear') {
     const info = WEATHER_INFO[snap.weather.kind];
-    drawPanel(g, 274, 12, 108, 32);
+    drawPanel(g, 344, 12, 108, 32);
     g.font = `800 12px ${FONT_BODY}`;
     g.fillStyle = '#cfe6ff';
     g.textAlign = 'left';
-    tabText(g, `${info.icon} ${info.label} ${snap.weather.t}s`, 284, 33);
+    tabText(g, `${info.icon} ${info.label} ${snap.weather.t}s`, 354, 33);
   }
 
   const sorted = [...snap.players].sort((a, b) => b.score - a.score).slice(0, 8);
@@ -2539,8 +2822,12 @@ function frame(realNow) {
   ctx.translate(sx / ZOOM, sy / ZOOM);
 
   drawBackground(ctx, time, snap.wave, weather);
-  for (const t of world.trunks) drawTrunk(ctx, t, time);
+  const burningById = new Map((snap.burning || []).map((b) => [b.id, b]));
+  for (const t of world.trunks) drawTrunk(ctx, t, time, burningById.get(t.id));
+  for (const sp of snap.saplings || []) drawSapling(ctx, sp, time);
   drawPlatforms(ctx, time, broken);
+  for (const tr of snap.traps || []) drawTrap(ctx, tr, time);
+  for (const l of snap.lures || []) drawLure(ctx, l, time);
   for (const d of world.dens) drawDen(ctx, d, (snap.dens || []).find((s) => s.id === d.id), time);
 
   for (const pk of snap.pickups || []) drawPickup(ctx, pk, pk.x - camX, pk.y - camY, time);
@@ -2553,6 +2840,22 @@ function frame(realNow) {
     drawEmote(ctx, p, p.rx - camX, p.ry - camY, dt);
   }
   for (const f of snap.fires || []) drawFire(ctx, f, f.x - camX, f.y - camY, time);
+  for (let i = hornRings.length - 1; i >= 0; i--) {
+    const r = hornRings[i];
+    r.t += dt;
+    if (r.t > 1.6) {
+      hornRings.splice(i, 1);
+      continue;
+    }
+    for (let k = 0; k < 3; k++) {
+      const rr = ((r.t + k * 0.3) % 1.6) * 260;
+      ctx.strokeStyle = `rgba(217,180,74,${0.6 * (1 - rr / 260)})`;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(r.x - camX, r.y - camY, rr, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
 
   if (me && me.alive) {
     const near = playersR.find((g) => !g.alive && g.on !== false && Math.abs(g.rx - me.rx) < 66 && Math.abs(g.ry - me.ry) < 84);
@@ -2630,7 +2933,9 @@ function frame(realNow) {
   if (weather === 'fog') {
     const fx = me ? me.rx + 15 - camX : CAM.w / 2;
     const fy = me ? me.ry + 24 - camY : CAM.h / 2;
-    const r = 150 + Math.sin(time * 1.3) * 8;
+    // A firefly lantern (held, or standing nearby) doubles how far you can see
+    const lanternNear = me && ((me.item === 'lantern') || (snap.lures || []).some((l) => l.kind === 'lantern' && Math.abs(l.x - me.rx) < 300 && Math.abs(l.y - me.ry) < 200));
+    const r = (150 + Math.sin(time * 1.3) * 8) * (lanternNear ? 2 : 1);
     const fog = ctx.createRadialGradient(fx, fy, r * 0.45, fx, fy, r);
     fog.addColorStop(0, 'rgba(180,200,195,0)');
     fog.addColorStop(1, 'rgba(180,200,195,0.93)');
