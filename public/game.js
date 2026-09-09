@@ -1094,10 +1094,13 @@ function drawTrunk(g, t, time) {
   bark.addColorStop(1, '#5c3c22');
   g.fillStyle = bark;
   g.fillRect(x - 14, top + 6, 28, h - 6);
+  // Bark rings and knots in world coordinates, so they stay put when the camera moves
   g.fillStyle = 'rgba(40,20,8,0.45)';
-  for (let y = top + 24; y < bottom - 8; y += 26) {
+  for (let wy = t.top + 24; wy < t.bottom - 8; wy += 26) {
+    const y = wy - camY;
+    const k = Math.round((wy - t.top) / 26);
     g.fillRect(x - 12, y, 24, 3);
-    g.fillRect(x - 6 + Math.sin(y) * 4, y - 9, 4, 6);
+    g.fillRect(x - 6 + ((k * 7) % 9) - 4, y - 9, 4, 6);
   }
   g.fillStyle = 'rgba(255,240,200,0.18)';
   g.fillRect(x - 10, top + 6, 3, h - 6);
