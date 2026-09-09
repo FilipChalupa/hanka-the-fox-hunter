@@ -82,6 +82,7 @@ const PICKUP_INFO = {
   shotgun: { label: 'Brokovnice', icon: '⋔', color: '#ffb347' },
   rapid: { label: 'Rychlopalba', icon: '⚡', color: '#ffe066' },
   speed: { label: 'Rychlé nohy', icon: '»', color: '#7fe0a8' },
+  stink: { label: 'Smrad', icon: '☁', color: '#9fd66b' },
 };
 const WEATHER_INFO = {
   clear: { label: '', icon: '' },
@@ -847,6 +848,10 @@ function handleEvents(events) {
       case 'foxgiveup':
         floatingTexts.push({ x: ev.x, y: ev.y - 6, text: '…?', color: '#ffd9b3', life: 1.2, size: 13 });
         break;
+      case 'foxflee':
+        floatingTexts.push({ x: ev.x, y: ev.y - 6, text: 'fuj!', color: '#9fd66b', life: 1, size: 12 });
+        burst(ev.x, ev.y + 10, 5, { colors: ['#9fd66b', '#c9e6b8'], minSpeed: 20, maxSpeed: 70, life: 0.5, size: 4, gravity: -60, round: true });
+        break;
       case 'foxspawn':
         burst(ev.x, ev.y, 8, { colors: ['#3b2a1a', '#5a3a1f'], minSpeed: 20, maxSpeed: 90, life: 0.5, up: 60, size: 4 });
         break;
@@ -1593,6 +1598,24 @@ function drawHunter(g, p, x, y, time, isMe) {
   drawHunterSprite(g, o, { facing: p.facing, swing, lean, squash: a.squash, recoil: a.recoil, flash: a.recoil > 0.55 ? (a.recoil - 0.55) / 0.45 : 0, flicker: p.inv && !p.dash, time, climbing: p.climbing, dashing: p.dash });
   g.restore();
 
+  if (p.stinkT > 0) {
+    // Green wisps rising off the reeking hunter
+    for (let i = 0; i < 4; i++) {
+      const t = (time * 0.8 + i * 0.27) % 1;
+      g.globalAlpha = (1 - t) * 0.55;
+      g.strokeStyle = '#9fd66b';
+      g.lineWidth = 2;
+      g.beginPath();
+      const bx = cx - 14 + i * 9;
+      const by = y + 10 - t * 46;
+      g.moveTo(bx, by + 12);
+      g.quadraticCurveTo(bx + 5, by + 6, bx, by);
+      g.quadraticCurveTo(bx - 5, by - 6, bx, by - 12);
+      g.stroke();
+    }
+    g.globalAlpha = 1;
+  }
+
   g.font = `800 11px ${FONT_BODY}`;
   g.textAlign = 'center';
   g.lineWidth = 3;
@@ -2125,6 +2148,7 @@ function drawHUD(g, me, snap, dt) {
     const items = [];
     if (me.weapon && me.weapon !== 'rifle') items.push({ info: PICKUP_INFO[me.weapon], t: me.weaponT });
     if (me.speedT > 0) items.push({ info: PICKUP_INFO.speed, t: me.speedT });
+    if (me.stinkT > 0) items.push({ info: PICKUP_INFO.stink, t: me.stinkT });
     items.forEach((it, i) => {
       const x = 176 + i * 40;
       g.fillStyle = 'rgba(0,0,0,0.35)';

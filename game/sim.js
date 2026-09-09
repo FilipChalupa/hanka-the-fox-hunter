@@ -36,7 +36,9 @@ const PICKUPS = {
   shotgun: { weight: 3 },
   rapid: { weight: 3 },
   speed: { weight: 2, duration: 12 },
+  stink: { weight: 3, duration: 10 },
 };
+const STINK = { radius: 190, vertical: 90, fleeTime: 2.5 };
 const PICKUP = { w: 22, h: 22, life: 25, every: [14, 22], max: 3, dropChance: 0.08, megaDropChance: 0.6 };
 const FIRE = { life: 6, radius: 34, height: 44, tick: 0.5, playerDamage: 6, foxDamage: 8, foxAvoid: 120, rainDrain: 3 };
 const DEN = { hp: 80, collapseTime: 12, regen: 3 };
@@ -137,7 +139,7 @@ class Game {
       totalKills: 0, totalRevives: 0, totalTeamKills: 0, rounds: 0,
       facing: 1, onGround: false, climbing: false, dashT: 0, dashDir: 1, dashCd: 0, jumpHeld: false, jumpTime: 0, speedBoost: false,
       shootTimer: 0, invulnTimer: 0, fireTick: 0, emoteTimer: 0,
-      weapon: 'rifle', weaponTimer: 0, speedTimer: 0,
+      weapon: 'rifle', weaponTimer: 0, speedTimer: 0, stinkTimer: 0,
       reviveProgress: 0, reviver: 0, reviving: 0,
       spawnedAt: this.time, lastSurvival: 0, lifeKills: 0, bestSurvival: 0, bestLifeKills: 0, bestScore: 0,
       input: { left: false, right: false, jump: false, shoot: false, down: false, revive: false, dash: 0 },
@@ -200,7 +202,7 @@ class Game {
   respawnPlayer(p) {
     Object.assign(p, {
       alive: true, hp: PLAYER.hp, spawnedAt: this.time, lifeKills: 0, score: 0, kills: 0, teamKills: 0, roundRevives: 0,
-      weapon: 'rifle', weaponTimer: 0, speedTimer: 0, speedBoost: false, reviveProgress: 0, climbing: false, dashT: 0,
+      weapon: 'rifle', weaponTimer: 0, speedTimer: 0, stinkTimer: 0, speedBoost: false, reviveProgress: 0, climbing: false, dashT: 0,
       x: WORLD.width / 2 - PLAYER.w / 2 + rand(-80, 80), y: WORLD.groundY - PLAYER.h, vx: 0, vy: 0, invulnTimer: 1.5,
     });
     this.push({ kind: 'respawn', id: p.id, x: p.x, y: p.y });
@@ -259,6 +261,7 @@ class Game {
       }
     }
     p.speedTimer = Math.max(0, p.speedTimer - dt);
+    p.stinkTimer = Math.max(0, p.stinkTimer - dt);
     p.speedBoost = p.speedTimer > 0;
 
     const inp = p.input;
@@ -302,6 +305,7 @@ class Game {
   applyPickup(p, pk) {
     if (pk.kind === 'medkit') p.hp = Math.min(PLAYER.hp, p.hp + 40);
     else if (pk.kind === 'speed') p.speedTimer = PICKUPS.speed.duration;
+    else if (pk.kind === 'stink') p.stinkTimer = PICKUPS.stink.duration;
     else {
       p.weapon = pk.kind;
       p.weaponTimer = WEAPONS[pk.kind].duration;
@@ -435,7 +439,7 @@ class Game {
       facing: -den.side, onGround: false,
       biteTimer: rand(0.3, 0.8), jumpTimer: rand(0.3, 1.2), wanderDir: -den.side, wanderTimer: 0, fireTick: 0,
       dug: kind === 'digger', digTimer: kind === 'digger' ? 0 : rand(3, 6), stun: 0,
-      bestDist: Infinity, stuckT: 0, roam: null,
+      bestDist: Infinity, stuckT: 0, roam: null, fleeing: false, fleeT: 0, fleeDir: 1,
     };
     this.foxes.set(id, fox);
     this.push({ kind: 'foxspawn', id, den: den.id, x: fox.x + fox.w / 2, y: fox.y + fox.h, foxKind: kind });
@@ -468,6 +472,21 @@ class Game {
     return null;
   }
 
+  nearestStinker(fox) {
+    let best = null;
+    let bestD = Infinity;
+    for (const p of this.players.values()) {
+      if (!p.alive || p.stinkTimer <= 0) continue;
+      const dx = Math.abs(p.x + p.w / 2 - (fox.x + fox.w / 2));
+      const dy = Math.abs(p.y + p.h - (fox.y + fox.h));
+      if (dx < STINK.radius && dy < STINK.vertical && dx < bestD) {
+        bestD = dx;
+        best = p;
+      }
+    }
+    return best;
+  }
+
   stumpCover(p) {
     const cx = p.x + p.w / 2;
     return this.world.decor.find((d) => d.kind === 'stump' && Math.abs(d.x - cx) < STUMP_HALF && p.y + p.h >= WORLD.groundY - 2);
@@ -484,6 +503,35 @@ class Game {
     }
     const target = this.nearestAlivePlayer(fox);
     const fcx = fox.x + fox.w / 2;
+
+    // Stink: a reeking hunter drives nearby foxes the other way (mega foxes have no nose for it).
+    const stinker = fox.mega ? null : this.nearestStinker(fox);
+    if (stinker) {
+      if (!fox.fleeing) this.push({ kind: 'foxflee', id: fox.id, x: fcx, y: fox.y });
+      fox.fleeing = true;
+      fox.fleeT = STINK.fleeTime;
+      fox.fleeDir = fcx < stinker.x + stinker.w / 2 ? -1 : 1;
+    }
+    if (fox.fleeing) {
+      fox.fleeT -= dt;
+      fox.facing = fox.fleeDir;
+      fox.vx = fox.fleeDir * fox.speed * 0.9;
+      if ((fox.x <= 2 && fox.vx < 0) || (fox.x + fox.w >= WORLD.width - 2 && fox.vx > 0)) fox.fleeDir = -fox.fleeDir;
+      fox.roam = null;
+      fox.bestDist = Infinity;
+      fox.stuckT = 0;
+      if (fox.fleeT <= 0) {
+        // Far enough: sniff around for a bit before daring to come back
+        fox.fleeing = false;
+        fox.roam = { steps: [{ dir: 0, t: rand(1, 2) }, { dir: fox.fleeDir, t: rand(0.5, 1.5) }] };
+      }
+      if (fox.dug) {
+        fox.x = clamp(fox.x + fox.vx * dt, 0, WORLD.width - fox.w);
+        return;
+      }
+      stepPhysics(fox, dt, this.world.platforms);
+      return;
+    }
 
     if (fox.kind === 'digger') {
       if (fox.dug) {
@@ -931,7 +979,7 @@ class Game {
         facing: p.facing, alive: p.alive, onGround: p.onGround, climbing: p.climbing, dash: p.dashT > 0, inv: p.invulnTimer > 0,
         dashCd: Math.round(p.dashCd * 100) / 100, jumpHeld: p.jumpHeld, jumpTime: Math.round(p.jumpTime * 100) / 100, dashDir: p.dashDir,
         seq: p.seq,
-        weapon: p.weapon, weaponT: Math.ceil(p.weaponTimer), speedT: Math.ceil(p.speedTimer),
+        weapon: p.weapon, weaponT: Math.ceil(p.weaponTimer), speedT: Math.ceil(p.speedTimer), stinkT: Math.ceil(p.stinkTimer),
         revive: p.alive ? 0 : Math.round((p.reviveProgress / PLAYER.reviveTime) * 100) / 100,
         reviving: p.reviving,
         survived: Math.round(p.alive ? this.time - p.spawnedAt : p.lastSurvival || 0),
@@ -941,7 +989,7 @@ class Game {
       foxes: [...this.foxes.values()].map((f) => ({
         id: f.id, kind: f.kind, mega: f.mega, w: f.w, h: f.h, dug: f.dug || false, stun: f.stun > 0,
         x: Math.round(f.x * 10) / 10, y: Math.round(f.y * 10) / 10, vx: Math.round(f.vx),
-        hp: f.hp, maxHp: f.maxHp, facing: f.facing, onGround: f.onGround, roam: !!f.roam,
+        hp: f.hp, maxHp: f.maxHp, facing: f.facing, onGround: f.onGround, roam: !!f.roam, flee: !!f.fleeing,
       })),
       bullets: [...this.bullets.values()].map((b) => ({ id: b.id, x: Math.round(b.x), y: Math.round(b.y), dir: Math.sign(b.vx) })),
       pickups: [...this.pickups.values()].map((pk) => ({ id: pk.id, kind: pk.kind, x: pk.x, y: pk.y, life: Math.round(pk.life) })),

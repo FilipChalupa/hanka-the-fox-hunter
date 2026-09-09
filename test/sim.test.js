@@ -222,6 +222,28 @@ test('a fox that cannot reach a hunter up a tree gives up for a while, then retu
   assert.ok(fox.y + fox.h > trunk.top + 100, 'still on the ground');
 });
 
+test('a stinking hunter makes nearby foxes turn around and run the other way', () => {
+  const game = mk();
+  const a = game.addPlayer({ name: 'A' });
+  place(a, 1500);
+  const fox = game.spawnFox('normal');
+  fox.x = 1650;
+  fox.y = WORLD.groundY - fox.h;
+  run(game, 0.5);
+  assert.ok(fox.x < 1650, 'fox approaches first');
+  game.pickups.set(999, { id: 999, kind: 'stink', x: a.x, y: a.y, w: 22, h: 22, life: 10 });
+  const events = run(game, 1.5);
+  assert.ok(a.stinkTimer > 8, 'stink active');
+  assert.ok(events.some((e) => e.kind === 'foxflee' && e.id === fox.id));
+  assert.ok(fox.x > 1720, `fox ran away: ${fox.x}`);
+  assert.equal(a.hp, PLAYER.hp, 'not bitten');
+  const mega = game.spawnFox('mega');
+  mega.x = 1600;
+  mega.y = WORLD.groundY - mega.h;
+  run(game, 0.5);
+  assert.ok(mega.x < 1600, 'mega fox does not care about the smell');
+});
+
 test('a bullet bursts a mushroom and shakes leaves off a trunk', () => {
   const game = mk();
   const a = game.addPlayer({ name: 'A' });
