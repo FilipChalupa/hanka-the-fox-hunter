@@ -543,3 +543,24 @@ test('fire at the foot of a climbable tree burns it down after a few seconds', (
   run(game, 1.5);
   assert.ok(a.y + a.h > trunk.top + 100 || !a.alive, 'the hunter fell');
 });
+
+test('down + jump on a one-way platform drops the hunter through it instead of jumping', () => {
+  const game = mk();
+  const a = game.addPlayer({ name: 'A' });
+  const pl = game.world.platforms.find((p) => !p.ground && !p.canopy && !p.branch && p.y > 500);
+  place(a, pl.x + pl.w / 2 - PLAYER.w / 2, pl.y - PLAYER.h);
+  run(game, 0.1);
+  assert.equal(a.onGround, true);
+  game.setInput(a.id, input({ down: true, jump: true }));
+  const events = run(game, 0.05);
+  assert.ok(events.some((e) => e.kind === 'drop'), 'drop event');
+  assert.ok(a.y > pl.y - PLAYER.h + 1, 'moved below the platform top');
+  game.setInput(a.id, input({}));
+  run(game, 1.5);
+  assert.ok(a.y + a.h > pl.y + 20, `fell through: ${a.y + a.h} vs ${pl.y}`);
+  // Plain jump still jumps
+  const y0 = a.y;
+  game.setInput(a.id, input({ jump: true }));
+  run(game, 0.2);
+  assert.ok(a.y < y0 - 20, 'normal jump goes up');
+});

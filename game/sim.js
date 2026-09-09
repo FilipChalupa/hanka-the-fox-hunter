@@ -314,6 +314,7 @@ class Game {
         this.push({ kind: 'dash', id: p.id, x: p.x + p.w / 2, y: p.y + p.h / 2, dir: p.dashDir });
       }
       if (h === 'grab') this.push({ kind: 'grab', id: p.id, x: p.x + p.w / 2, y: p.y + p.h });
+      if (h === 'drop') this.push({ kind: 'drop', id: p.id, x: p.x + p.w / 2, y: p.y });
     }
     if (wasDashing && p.dashT <= 0) p.invulnTimer = Math.min(p.invulnTimer, 0.1);
 
@@ -1209,6 +1210,7 @@ class Game {
         hp: p.hp, score: p.score, kills: p.kills, deaths: p.deaths,
         facing: p.facing, alive: p.alive, onGround: p.onGround, climbing: p.climbing, dash: p.dashT > 0, inv: p.invulnTimer > 0,
         dashCd: Math.round(p.dashCd * 100) / 100, jumpHeld: p.jumpHeld, jumpTime: Math.round(p.jumpTime * 100) / 100, dashDir: p.dashDir,
+      dropT: Math.round((p.dropT || 0) * 100) / 100, dropY: p.dropY || 0,
         seq: p.seq,
         weapon: p.weapon, weaponT: Math.ceil(p.weaponTimer), speedT: Math.ceil(p.speedTimer), stinkT: Math.ceil(p.stinkTimer),
       incT: Math.ceil(p.incTimer), doubleT: Math.ceil(p.doubleTimer), disguiseT: Math.ceil(p.disguiseTimer), item: p.item,

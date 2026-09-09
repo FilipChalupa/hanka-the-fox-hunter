@@ -580,6 +580,7 @@ function reconcile(data) {
     x: me.x, y: me.y, vx: me.vx, vy: me.vy || 0, onGround: me.onGround, climbing: me.climbing, alive: me.alive,
     dashT: me.dash ? Math.max(pred.dashT, 0.05) : 0, dashDir: me.dashDir || pred.dashDir, dashCd: me.dashCd || 0,
     jumpHeld: me.jumpHeld, jumpTime: me.jumpTime || 0, facing: me.facing, speedBoost: me.speedT > 0,
+    dropT: me.dropT || 0, dropY: me.dropY || 0,
   });
   // Drop acknowledged inputs, replay the rest on top of the server state.
   while (inputHistory.length && inputHistory[0].seq <= me.seq) inputHistory.shift();
@@ -614,6 +615,7 @@ function predictStep(dt) {
         shake = Math.max(shake, 2);
       }
       if (h === 'grab') SFX.grab();
+      if (h === 'drop') SFX.grab();
       if (h === 'land') SFX.land();
     }
   } else S.moveGhost(pred, inp, dt);
@@ -941,6 +943,9 @@ function handleEvents(events) {
         break;
       case 'grab':
         dust(ev.x, ev.y, 3);
+        break;
+      case 'drop':
+        dust(ev.x, ev.y + 48, 4);
         break;
       case 'foxjump':
         dust(ev.x, ev.y, 3);

@@ -91,7 +91,8 @@
   // -------------------------------------------------------------------------
   // Physics
   // -------------------------------------------------------------------------
-  function stepPhysics(e, dt, platforms) {
+  // `dropY`: while dropping through a one-way platform, ignore platforms at that height.
+  function stepPhysics(e, dt, platforms, dropY) {
     e.vy = Math.min(e.vy + GRAVITY * dt, MAX_FALL);
     const prevBottom = e.y + e.h;
     e.x = clamp(e.x + e.vx * dt, 0, WORLD.width - e.w);
@@ -100,6 +101,7 @@
     if (e.vy >= 0) {
       for (const p of platforms) {
         if (e.x + e.w <= p.x || e.x >= p.x + p.w) continue;
+        if (dropY !== undefined && !p.ground && Math.abs(p.y - dropY) < 6) continue;
         const bottom = e.y + e.h;
         if (prevBottom <= p.y + 0.5 && bottom >= p.y) {
           e.y = p.y - e.h;
@@ -122,6 +124,15 @@
       if (x + w > p.x && x < p.x + p.w && p.y >= bottom - 2 && p.y < best) best = p.y;
     }
     return best;
+  }
+
+  function platformUnder(platforms, p) {
+    const bottom = p.y + p.h;
+    for (const pl of platforms) {
+      if (pl.ground) continue;
+      if (p.x + p.w > pl.x && p.x < pl.x + pl.w && Math.abs(bottom - pl.y) < 1.5) return pl;
+    }
+    return null;
   }
 
   function trunkAt(trunks, p) {
@@ -200,16 +211,28 @@
     p.vx = dir * speed;
     if (dir !== 0) p.facing = dir;
 
+    p.dropT = Math.max(0, (p.dropT || 0) - dt);
     if (inp.jump && !p.jumpHeld && p.onGround) {
-      p.vy = -PLAYER.jump;
-      p.onGround = false;
-      p.jumpTime = 0;
-      out.push('jump');
+      const under = inp.down ? platformUnder(world.platforms, p) : null;
+      if (under) {
+        // Down + jump on a one-way platform: drop through it instead of jumping
+        p.dropT = 0.3;
+        p.dropY = under.y;
+        p.y += 3;
+        p.vy = 120;
+        p.onGround = false;
+        out.push('drop');
+      } else {
+        p.vy = -PLAYER.jump;
+        p.onGround = false;
+        p.jumpTime = 0;
+        out.push('jump');
+      }
     }
     p.jumpTime = inp.jump ? (p.jumpTime || 0) + dt : 0;
     p.jumpHeld = inp.jump;
 
-    stepPhysics(p, dt, world.platforms);
+    stepPhysics(p, dt, world.platforms, p.dropT > 0 ? p.dropY : undefined);
 
     // Grab a trunk: hold up while airborne next to it, or press down while standing at its foot.
     if (trunk && !p.onGround && inp.jump && p.jumpTime > 0.12 && p.vy > -200) {
@@ -309,5 +332,5 @@
     return next;
   }
 
-  return { WORLD, GRAVITY, PLAYER, clamp, overlaps, seeded, generateWorld, stepPhysics, groundBelow, trunkAt, movePlayer, moveGhost, encodeDelta, applyDelta, COLLECTIONS };
+  return { WORLD, GRAVITY, PLAYER, clamp, overlaps, seeded, generateWorld, stepPhysics, groundBelow, trunkAt, platformUnder, movePlayer, moveGhost, encodeDelta, applyDelta, COLLECTIONS };
 });
