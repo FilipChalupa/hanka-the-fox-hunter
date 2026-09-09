@@ -303,7 +303,8 @@ const KEYMAP = {
   ArrowRight: 'right', KeyD: 'right',
   ArrowUp: 'jump', KeyW: 'jump', Space: 'jump',
   ArrowDown: 'down', KeyS: 'down',
-  ControlLeft: 'shoot', ControlRight: 'shoot', KeyF: 'shoot', KeyX: 'shoot',
+  // Ctrl is deliberately not a shoot key: Ctrl+W (shoot + jump) would close the tab.
+  ShiftLeft: 'shoot', ShiftRight: 'shoot', KeyF: 'shoot', KeyX: 'shoot', KeyJ: 'shoot', KeyK: 'shoot',
   KeyE: 'revive',
 };
 const EMOTE_KEYS = { Digit1: 1, Digit2: 2, Digit3: 3, Digit4: 4, Numpad1: 1, Numpad2: 2, Numpad3: 3, Numpad4: 4 };
@@ -359,6 +360,39 @@ window.addEventListener('blur', () => {
 });
 canvas.addEventListener('mousedown', () => ensureAudio());
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// Accidental Ctrl+W / tab close while playing: ask first (the browser shows its own dialog).
+window.addEventListener('beforeunload', (e) => {
+  if (!myId) return;
+  e.preventDefault();
+  e.returnValue = '';
+});
+
+// Fullscreen with Keyboard Lock: in fullscreen Chrome lets the page keep Ctrl+W, Alt+Tab etc.
+const fsBtn = document.getElementById('fs');
+async function toggleFullscreen() {
+  try {
+    if (document.fullscreenElement) {
+      if (navigator.keyboard && navigator.keyboard.unlock) navigator.keyboard.unlock();
+      await document.exitFullscreen();
+    } else {
+      await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
+      if (navigator.keyboard && navigator.keyboard.lock) await navigator.keyboard.lock(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyF', 'KeyX', 'KeyJ', 'KeyK', 'KeyE', 'Space', 'Escape']);
+    }
+  } catch {
+    /* fullscreen not allowed here; nothing to do */
+  }
+}
+if (fsBtn) fsBtn.addEventListener('click', toggleFullscreen);
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'F11' && document.activeElement !== nameInput) {
+    e.preventDefault();
+    toggleFullscreen();
+  }
+});
+document.addEventListener('fullscreenchange', () => {
+  if (fsBtn) fsBtn.textContent = document.fullscreenElement ? '⤡' : '⛶';
+});
 
 if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
   document.body.classList.add('touch');

@@ -53,6 +53,23 @@
       touch-action: none;
     }
 
+    #fs {
+      position: fixed;
+      right: max(10px, env(safe-area-inset-right));
+      bottom: max(10px, env(safe-area-inset-bottom));
+      width: 34px; height: 34px;
+      border-radius: 8px;
+      border: 2px solid rgba(242, 165, 65, 0.6);
+      background: rgba(20, 12, 5, 0.55);
+      color: #f3ecd8;
+      font-size: 1rem;
+      cursor: pointer;
+      z-index: 6;
+      opacity: 0.6;
+    }
+    #fs:hover { opacity: 1; }
+    body.touch #fs { display: none; }
+
     /* ---------- Start screen ---------- */
     #overlay {
       position: fixed;
@@ -272,6 +289,7 @@
 </head>
 <body>
   <div id="wrap"><canvas id="game" width="960" height="540"></canvas></div>
+  <button id="fs" type="button" title="Celá obrazovka (F11). V celé obrazovce Chrome nezavře kartu na Ctrl+W.">⛶</button>
 
   <div id="touch">
     <div id="joy"><div id="knob"></div></div>
@@ -321,7 +339,7 @@
       </div>
 
       <div class="controls">
-        <kbd>A</kbd>/<kbd>D</kbd> pohyb · <kbd>W</kbd>/<kbd>Space</kbd> skok · <kbd>Ctrl</kbd>/<kbd>F</kbd>/<kbd>X</kbd> střelba<br />
+        <kbd>A</kbd>/<kbd>D</kbd> pohyb · <kbd>W</kbd>/<kbd>Space</kbd> skok · <kbd>Shift</kbd>/<kbd>F</kbd>/<kbd>X</kbd>/<kbd>J</kbd>/<kbd>K</kbd> střelba<br />
         <kbd>E</kbd> drž u ducha 3 s = oživení (10 HP) · <kbd>A A</kbd>/<kbd>D D</kbd> úhyb<br />
         Světlé kmeny jde lézt: drž <kbd>W</kbd> ve výskoku · <kbd>1</kbd>–<kbd>4</kbd> emoty · kulky zraní i kamarády
       </div>

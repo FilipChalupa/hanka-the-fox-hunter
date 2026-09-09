@@ -35,7 +35,8 @@ a hrajete spolu.
 | ------- | ---------------------------------------- |
 | Pohyb   | `A`/`D` nebo `←`/`→`                     |
 | Skok    | `W`, `↑` nebo `Space`                    |
-| Střelba | `Ctrl`, `F` nebo `X`                     |
+| Střelba | `Shift`, `F`, `X`, `J` nebo `K` (Ctrl záměrně ne, Ctrl+W by zavřelo kartu) |
+| Celá obrazovka | `F11` nebo tlačítko vpravo dole; v celé obrazovce Chrome díky Keyboard Lock nezavře kartu ani na Ctrl+W |
 | Oživení | drž `E` vedle ducha (3 s, nehýbat se, nestřílet) |
 | Úhyb    | dvojité `A`/`D` (krátký sprint s nezranitelností, cooldown 1 s) |
 | Lezení  | drž `W` ve výskoku u světlého kmene, `S` u paty kmene; `W`/`S` leze, skok do strany seskočí |
