@@ -431,26 +431,60 @@ document.addEventListener('fullscreenchange', () => {
 
 if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
   document.body.classList.add('touch');
+  // Long presses must never open a context menu, and no touch anywhere should become a browser gesture.
+  document.addEventListener('contextmenu', (e) => e.preventDefault());
+  document.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
+  document.addEventListener('gesturestart', (e) => e.preventDefault());
+
+  // Each button tracks its own pointers, so several fingers can hold several buttons at once.
+  const pointerOwner = new Map(); // pointerId -> release()
   for (const btn of document.querySelectorAll('.tbtn')) {
     const key = btn.dataset.key;
-    const on = (e) => {
+    const held = new Set();
+    const apply = () => {
+      const down = held.size > 0;
+      btn.classList.toggle('active', down);
+      if (key !== 'dash' && key !== 'use') input[key] = down;
+    };
+    btn.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       ensureAudio();
-      btn.classList.add('active');
+      try {
+        btn.setPointerCapture(e.pointerId);
+      } catch {}
+      held.add(e.pointerId);
+      pointerOwner.set(e.pointerId, () => {
+        held.delete(e.pointerId);
+        apply();
+      });
       if (key === 'dash') requestDash(pred.facing || 1);
       else if (key === 'use') pendingUse = true;
-      else input[key] = true;
+      apply();
+    });
+    const release = (e) => {
+      const rel = pointerOwner.get(e.pointerId);
+      if (rel) {
+        pointerOwner.delete(e.pointerId);
+        rel();
+      }
     };
-    const off = (e) => {
-      e.preventDefault();
-      btn.classList.remove('active');
-      if (key !== 'dash' && key !== 'use') input[key] = false;
-    };
-    btn.addEventListener('pointerdown', on);
-    btn.addEventListener('pointerup', off);
-    btn.addEventListener('pointercancel', off);
-    btn.addEventListener('pointerleave', off);
+    btn.addEventListener('pointerup', release);
+    btn.addEventListener('pointercancel', release);
   }
+  // Safety net: a pointer that ends anywhere else still releases its button.
+  const releaseAny = (e) => {
+    const rel = pointerOwner.get(e.pointerId);
+    if (rel) {
+      pointerOwner.delete(e.pointerId);
+      rel();
+    }
+  };
+  window.addEventListener('pointerup', releaseAny, true);
+  window.addEventListener('pointercancel', releaseAny, true);
+  window.addEventListener('blur', () => {
+    for (const rel of pointerOwner.values()) rel();
+    pointerOwner.clear();
+  });
   for (const btn of document.querySelectorAll('#emotes button')) {
     btn.addEventListener('pointerdown', (e) => {
       e.preventDefault();

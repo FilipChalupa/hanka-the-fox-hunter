@@ -38,6 +38,12 @@
       overflow: hidden;
       overscroll-behavior: none;
     }
+    /* On touch devices the whole page is a game pad: no browser gestures, no long-press menus */
+    body.touch, body.touch #wrap, body.touch #touch, body.touch canvas#game {
+      touch-action: none;
+      -webkit-touch-callout: none;
+      user-select: none; -webkit-user-select: none;
+    }
     #wrap {
       position: fixed;
       inset: 0;
