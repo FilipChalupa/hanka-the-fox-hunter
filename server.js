@@ -629,10 +629,18 @@ function damageFox(fox, amount, shooter, source) {
 // Bullets, clashes and fire
 // ---------------------------------------------------------------------------
 function spawnFire(x, y) {
-  const id = nextId++;
   const gy = groundBelow(x - FIRE.radius, FIRE.radius * 2, y);
-  fires.set(id, { id, x, y: gy, life: FIRE.life, maxLife: FIRE.life });
   pushEvent({ kind: 'clash', x, y, fireY: gy });
+  // A clash right next to a burning fire just feeds it instead of starting another one.
+  for (const f of fires.values()) {
+    if (Math.abs(f.x - x) < FIRE.radius * 1.5 && Math.abs(f.y - gy) < 10) {
+      f.life = FIRE.life;
+      f.x = (f.x + x) / 2;
+      return;
+    }
+  }
+  const id = nextId++;
+  fires.set(id, { id, x, y: gy, life: FIRE.life, maxLife: FIRE.life });
 }
 
 function updateBullets(dt) {

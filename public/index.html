@@ -2,16 +2,27 @@
 <html lang="cs">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
   <title>Hanka The Fox Hunter</title>
+  <meta name="description" content="Multiplayerová skákačka: lovci v nočním lese proti smečkám lišek." />
+  <meta name="theme-color" content="#123b26" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Fox Hunter" />
+  <meta property="og:title" content="Hanka The Fox Hunter" />
+  <meta property="og:description" content="Multiplayerová skákačka: lovci v nočním lese proti smečkám lišek." />
+  <meta property="og:image" content="/icons/icon-512.png" />
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="icon" href="/icons/icon-192.png" type="image/png" sizes="192x192" />
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+  <link rel="manifest" href="/manifest.webmanifest" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700;900&family=Nunito:wght@600;800&display=swap" rel="stylesheet" />
   <style>
     :root {
       --bg: #071009;
-      --wood: #5a3a1f;
-      --wood-light: #8a5a30;
       --accent: #f2a541;
       --text: #f3ecd8;
       --title: "Cinzel", "Georgia", serif;
@@ -25,6 +36,7 @@
       color: var(--text);
       font-family: var(--body);
       overflow: hidden;
+      overscroll-behavior: none;
     }
     #wrap {
       position: fixed;
@@ -52,11 +64,9 @@
         radial-gradient(ellipse at 50% 120%, rgba(30, 80, 45, 0.55), transparent 60%),
         radial-gradient(ellipse at center, rgba(12, 40, 24, 0.9), rgba(3, 8, 5, 0.98));
       z-index: 10;
-      overflow: hidden;
+      overflow: auto;
     }
     #overlay.hidden { display: none; }
-
-    /* Silhouettes of trees along the bottom */
     #overlay::before {
       content: "";
       position: absolute;
@@ -69,8 +79,6 @@
       -webkit-mask-image: linear-gradient(to top, #000 60%, transparent);
       pointer-events: none;
     }
-
-    /* Fox eyes glowing in the dark */
     .eyes {
       position: absolute;
       display: flex;
@@ -89,7 +97,6 @@
       0%, 88%, 100% { transform: scaleY(1); opacity: 0.95; }
       90%, 94% { transform: scaleY(0.1); opacity: 0.5; }
     }
-
     .card {
       position: relative;
       background: linear-gradient(180deg, #6a4526 0%, #4c3018 55%, #3c2410 100%);
@@ -97,12 +104,13 @@
       outline: 2px solid #9c6a3a;
       outline-offset: -8px;
       border-radius: 18px;
-      padding: 30px 38px 26px;
+      padding: 26px 34px 22px;
       width: min(94vw, 500px);
+      margin: 12px;
       box-shadow: 0 30px 80px rgba(0, 0, 0, 0.75), inset 0 0 40px rgba(0, 0, 0, 0.35);
       text-align: center;
     }
-    .card::before, .card::after {
+    .card::before {
       content: "";
       position: absolute;
       inset: 0;
@@ -114,23 +122,17 @@
       margin: 0 0 2px;
       font-family: var(--title);
       font-weight: 900;
-      font-size: 2.1rem;
+      font-size: 2rem;
       line-height: 1.1;
       color: var(--accent);
       letter-spacing: 1px;
       text-shadow: 0 3px 0 #5a2f08, 0 6px 14px rgba(0,0,0,0.7);
     }
-    .card .sub {
-      margin: 6px 0 18px;
-      opacity: 0.85;
-      font-size: 0.95rem;
-      font-style: italic;
-    }
+    .card .sub { margin: 6px 0 16px; opacity: 0.85; font-size: 0.95rem; font-style: italic; }
     .row { display: flex; gap: 16px; align-items: stretch; }
     .row > * { min-width: 0; }
     #preview {
-      width: 120px;
-      height: 130px;
+      width: 120px; height: 130px;
       border-radius: 12px;
       background: radial-gradient(circle at 50% 40%, #1f4a2e, #0b1d12 80%);
       border: 2px solid #2b1708;
@@ -153,101 +155,119 @@
     }
     .card input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(242,165,65,0.35); }
     .outfit {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 6px;
-      background: rgba(0,0,0,0.25);
-      border-radius: 8px;
-      padding: 6px 8px;
-      font-size: 0.9rem;
+      display: flex; align-items: center; justify-content: space-between; gap: 6px;
+      background: rgba(0,0,0,0.25); border-radius: 8px; padding: 6px 8px; font-size: 0.9rem;
     }
     .outfit button {
-      width: 32px; height: 32px;
-      border-radius: 50%;
-      border: 2px solid #2b1708;
-      background: var(--accent);
-      color: #2b1708;
-      font-weight: 900;
-      cursor: pointer;
-      font-size: 1rem;
-      padding: 0;
+      width: 32px; height: 32px; border-radius: 50%;
+      border: 2px solid #2b1708; background: var(--accent); color: #2b1708;
+      font-weight: 900; cursor: pointer; font-size: 1rem; padding: 0;
     }
     .outfit button:hover { background: #ffbd5c; }
     #outfitName { font-weight: 800; }
     .card button.play {
-      width: 100%;
-      margin-top: 16px;
-      font-family: var(--title);
-      font-weight: 900;
-      font-size: 1.35rem;
-      letter-spacing: 2px;
-      padding: 13px;
-      border: 3px solid #2b1708;
-      border-radius: 10px;
-      background: linear-gradient(180deg, #ffc35c, #e08b1f);
-      color: #2b1708;
-      cursor: pointer;
+      width: 100%; margin-top: 14px;
+      font-family: var(--title); font-weight: 900; font-size: 1.35rem; letter-spacing: 2px;
+      padding: 13px; border: 3px solid #2b1708; border-radius: 10px;
+      background: linear-gradient(180deg, #ffc35c, #e08b1f); color: #2b1708; cursor: pointer;
       box-shadow: 0 4px 0 #7a4410, 0 8px 18px rgba(0,0,0,0.5);
       transition: transform 0.08s, box-shadow 0.08s;
     }
     .card button.play:hover { background: linear-gradient(180deg, #ffd27f, #f09a2a); }
     .card button.play:active { transform: translateY(3px); box-shadow: 0 1px 0 #7a4410; }
     .controls {
-      margin-top: 16px;
-      font-size: 0.82rem;
-      opacity: 0.9;
-      text-align: left;
-      line-height: 1.7;
-      background: rgba(0,0,0,0.22);
-      border-radius: 8px;
-      padding: 8px 12px;
+      margin-top: 14px; font-size: 0.8rem; opacity: 0.9; text-align: left; line-height: 1.7;
+      background: rgba(0,0,0,0.22); border-radius: 8px; padding: 8px 12px;
     }
     .controls kbd {
-      background: #f3ecd8;
-      color: #2b1708;
-      border-radius: 4px;
-      padding: 0 6px;
-      font-family: var(--body);
-      font-weight: 800;
-      font-size: 0.78rem;
-      box-shadow: 0 2px 0 #9c6a3a;
+      background: #f3ecd8; color: #2b1708; border-radius: 4px; padding: 0 6px;
+      font-family: var(--body); font-weight: 800; font-size: 0.76rem; box-shadow: 0 2px 0 #9c6a3a;
     }
     #status { margin-top: 8px; font-size: 0.85rem; color: #ffb3a7; min-height: 1.2em; }
 
     /* ---------- Touch controls ---------- */
     #touch { position: fixed; inset: 0; pointer-events: none; display: none; z-index: 5; }
     body.touch #touch { display: block; }
+    #joy {
+      position: absolute;
+      left: max(16px, env(safe-area-inset-left)); bottom: max(16px, env(safe-area-inset-bottom));
+      width: 150px; height: 150px;
+      border-radius: 50%;
+      background: rgba(20, 12, 5, 0.35);
+      border: 2px solid rgba(242, 165, 65, 0.45);
+      pointer-events: auto;
+      touch-action: none;
+    }
+    #joy::before {
+      content: "";
+      position: absolute; inset: 22px;
+      border-radius: 50%;
+      border: 1px dashed rgba(255,255,255,0.18);
+    }
+    #knob {
+      position: absolute;
+      left: 50%; top: 50%;
+      width: 62px; height: 62px;
+      margin: -31px 0 0 -31px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 35% 35%, #a06a3a, #5a3a1f 70%);
+      border: 3px solid rgba(242, 165, 65, 0.8);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.6);
+      transition: transform 0.05s;
+    }
     .tbtn {
       position: absolute;
-      bottom: 4vh;
-      width: 66px; height: 66px;
+      width: 68px; height: 68px;
       border-radius: 50%;
-      background: rgba(90, 58, 31, 0.55);
-      border: 3px solid rgba(242, 165, 65, 0.7);
+      background: rgba(90, 58, 31, 0.6);
+      border: 3px solid rgba(242, 165, 65, 0.75);
       color: #fff;
-      font-size: 1.6rem;
-      display: flex; align-items: center; justify-content: center;
+      font-family: var(--body);
+      font-weight: 800;
+      font-size: 0.75rem;
+      line-height: 1.1;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
       pointer-events: auto;
       user-select: none; -webkit-user-select: none;
+      touch-action: none;
     }
-    .tbtn.active { background: rgba(242, 165, 65, 0.7); }
-    #tLeft { left: 4vw; }
-    #tRight { left: calc(4vw + 82px); }
-    #tDown { right: calc(4vw + 164px); }
-    #tJump { right: calc(4vw + 82px); }
-    #tShoot { right: 4vw; }
+    .tbtn span { font-size: 1.5rem; }
+    .tbtn.active { background: rgba(242, 165, 65, 0.75); color: #2b1708; }
+    #tShoot { right: max(16px, env(safe-area-inset-right)); bottom: max(16px, env(safe-area-inset-bottom)); width: 84px; height: 84px; }
+    #tJump { right: calc(max(16px, env(safe-area-inset-right)) + 100px); bottom: max(28px, env(safe-area-inset-bottom)); }
+    #tRevive { right: max(16px, env(safe-area-inset-right)); bottom: calc(max(16px, env(safe-area-inset-bottom)) + 100px); width: 60px; height: 60px; font-size: 0.65rem; }
+    #emotes {
+      position: absolute;
+      top: calc(max(8px, env(safe-area-inset-top)) + 52px);
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex; gap: 6px;
+      pointer-events: auto;
+    }
+    #emotes button {
+      width: 40px; height: 34px;
+      border-radius: 8px;
+      border: 2px solid rgba(242, 165, 65, 0.6);
+      background: rgba(20, 12, 5, 0.5);
+      font-size: 1.1rem;
+      padding: 0;
+    }
   </style>
 </head>
 <body>
   <div id="wrap"><canvas id="game" width="960" height="540"></canvas></div>
 
   <div id="touch">
-    <div class="tbtn" id="tLeft" data-key="left">◀</div>
-    <div class="tbtn" id="tRight" data-key="right">▶</div>
-    <div class="tbtn" id="tDown" data-key="down">⤓</div>
-    <div class="tbtn" id="tJump" data-key="jump">⤒</div>
-    <div class="tbtn" id="tShoot" data-key="shoot">✦</div>
+    <div id="joy"><div id="knob"></div></div>
+    <div class="tbtn" id="tJump" data-key="jump"><span>⤒</span>skok</div>
+    <div class="tbtn" id="tShoot" data-key="shoot"><span>✦</span>střelba</div>
+    <div class="tbtn" id="tRevive" data-key="revive"><span>✚</span>oživit</div>
+    <div id="emotes">
+      <button data-emote="1">👍</button>
+      <button data-emote="2">🆘</button>
+      <button data-emote="3">😂</button>
+      <button data-emote="4">❤️</button>
+    </div>
   </div>
 
   <div id="overlay">
@@ -278,11 +298,9 @@
       <div id="status"></div>
 
       <div class="controls">
-        <kbd>A</kbd>/<kbd>D</kbd> nebo <kbd>←</kbd>/<kbd>→</kbd> pohyb &nbsp;·&nbsp;
-        <kbd>W</kbd>/<kbd>↑</kbd>/<kbd>Space</kbd> skok<br />
-        <kbd>Ctrl</kbd>, <kbd>F</kbd> nebo <kbd>X</kbd> střelba<br />
-        Liška <b>+10</b>, mega liška <b>+50</b>. Kdo umře, poletuje jako duch
-        (<kbd>W</kbd>/<kbd>S</kbd>). Když padnou všichni, začne nové kolo.
+        <kbd>A</kbd>/<kbd>D</kbd> pohyb · <kbd>W</kbd>/<kbd>Space</kbd> skok · <kbd>Ctrl</kbd>/<kbd>F</kbd>/<kbd>X</kbd> střelba<br />
+        <kbd>E</kbd> drž u ducha 3 s = oživení (10 HP), přitom se nehýbej a nestřílej<br />
+        <kbd>1</kbd>–<kbd>4</kbd> emoty · duch létá <kbd>W</kbd>/<kbd>S</kbd> · pozor, kulky zraní i kamarády
       </div>
     </div>
   </div>

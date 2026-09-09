@@ -69,6 +69,18 @@ let scoreShown = 0;
 let scoreBump = 0;
 let owl = null;
 let owlTimer = 8;
+let camX = 0;
+let camY = 0;
+let camLook = 0;
+let camInit = false;
+const emoteBubbles = new Map(); // player id -> {n, t}
+const EMOTES = ['', '👍 Dobrá!', '🆘 Pomoc!', '😂', '❤️ Díky'];
+const PICKUP_INFO = {
+  medkit: { label: 'Lékárnička', icon: '✚', color: '#e8383d' },
+  shotgun: { label: 'Brokovnice', icon: '⋔', color: '#ffb347' },
+  rapid: { label: 'Rychlopalba', icon: '⚡', color: '#ffe066' },
+  speed: { label: 'Rychlé nohy', icon: '»', color: '#7fe0a8' },
+};
 
 // ===========================================================================
 // Outfits
@@ -208,12 +220,26 @@ const SFX = {
   },
   bite: () => playTone({ noise: true, from: 1500, to: 200, dur: 0.1, gain: 0.05 }),
   respawn: () => playTone({ type: 'sine', from: 500, to: 900, dur: 0.3, gain: 0.05 }),
+  shotgun: () => {
+    playTone({ noise: true, from: 2200, to: 120, dur: 0.3, gain: 0.2 });
+    playTone({ type: 'square', from: 120, to: 40, dur: 0.18, gain: 0.08 });
+  },
+  rapid: () => playTone({ noise: true, from: 3800, to: 600, dur: 0.06, gain: 0.08 }),
+  clash: () => {
+    playTone({ type: 'sine', from: 1800, to: 300, dur: 0.35, gain: 0.12 });
+    playTone({ noise: true, from: 4000, to: 200, dur: 0.4, gain: 0.12 });
+  },
+  pickup: () => {
+    playTone({ type: 'sine', from: 660, to: 660, dur: 0.1, gain: 0.06 });
+    playTone({ type: 'sine', from: 880, to: 880, dur: 0.15, gain: 0.06, delay: 0.1 });
+    playTone({ type: 'sine', from: 1320, to: 1320, dur: 0.25, gain: 0.06, delay: 0.2 });
+  },
 };
 
 // ===========================================================================
 // Input
 // ===========================================================================
-const input = { left: false, right: false, jump: false, shoot: false, down: false };
+const input = { left: false, right: false, jump: false, shoot: false, down: false, revive: false };
 let lastSent = '';
 
 function send(obj) {
@@ -222,7 +248,7 @@ function send(obj) {
 
 function sendInput() {
   if (!myId) return;
-  const key = `${input.left}${input.right}${input.jump}${input.shoot}${input.down}`;
+  const key = `${input.left}${input.right}${input.jump}${input.shoot}${input.down}${input.revive}`;
   if (key === lastSent) return;
   lastSent = key;
   send({ t: 'input', ...input });
@@ -234,10 +260,13 @@ const KEYMAP = {
   ArrowUp: 'jump', KeyW: 'jump', Space: 'jump',
   ArrowDown: 'down', KeyS: 'down',
   ControlLeft: 'shoot', ControlRight: 'shoot', KeyF: 'shoot', KeyX: 'shoot',
+  KeyE: 'revive',
 };
+const EMOTE_KEYS = { Digit1: 1, Digit2: 2, Digit3: 3, Digit4: 4, Numpad1: 1, Numpad2: 2, Numpad3: 3, Numpad4: 4 };
 
 window.addEventListener('keydown', (e) => {
   if (document.activeElement === nameInput) return;
+  if (EMOTE_KEYS[e.code] && !e.repeat) send({ t: 'emote', n: EMOTE_KEYS[e.code] });
   const action = KEYMAP[e.code];
   if (!action) return;
   e.preventDefault();
@@ -282,6 +311,51 @@ if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
     btn.addEventListener('pointercancel', off);
     btn.addEventListener('pointerleave', off);
   }
+  for (const btn of document.querySelectorAll('#emotes button')) {
+    btn.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      send({ t: 'emote', n: Number(btn.dataset.emote) });
+    });
+  }
+
+  // Virtual joystick: drag anywhere inside the pad; direction thresholds map to the digital inputs.
+  const joy = document.getElementById('joy');
+  const knob = document.getElementById('knob');
+  let joyPointer = null;
+  const setJoy = (dx, dy) => {
+    const max = 50;
+    const len = Math.hypot(dx, dy);
+    const k = len > max ? max / len : 1;
+    knob.style.transform = `translate(${dx * k}px, ${dy * k}px)`;
+    const dead = 16;
+    input.left = dx < -dead;
+    input.right = dx > dead;
+    input.jump = dy < -dead * 1.4;
+    input.down = dy > dead * 1.4;
+    sendInput();
+  };
+  joy.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    ensureAudio();
+    joyPointer = e.pointerId;
+    joy.setPointerCapture(e.pointerId);
+    const r = joy.getBoundingClientRect();
+    setJoy(e.clientX - (r.left + r.width / 2), e.clientY - (r.top + r.height / 2));
+  });
+  joy.addEventListener('pointermove', (e) => {
+    if (e.pointerId !== joyPointer) return;
+    const r = joy.getBoundingClientRect();
+    setJoy(e.clientX - (r.left + r.width / 2), e.clientY - (r.top + r.height / 2));
+  });
+  const joyEnd = (e) => {
+    if (e.pointerId !== joyPointer) return;
+    joyPointer = null;
+    knob.style.transform = '';
+    input.left = input.right = input.jump = input.down = false;
+    sendInput();
+  };
+  joy.addEventListener('pointerup', joyEnd);
+  joy.addEventListener('pointercancel', joyEnd);
 }
 
 // ===========================================================================
@@ -307,6 +381,8 @@ function connect(name) {
       myId = msg.id;
       world = msg.world;
       platforms = msg.platforms;
+      buildScenery(msg.seed || 1);
+      camInit = false;
       overlay.classList.add('hidden');
       statusEl.textContent = '';
       lastSent = '';
@@ -436,12 +512,59 @@ function handleEvents(events) {
   for (const ev of events) {
     switch (ev.kind) {
       case 'shoot': {
-        burst(ev.x + ev.dir * 6, ev.y + 2, 5, { colors: ['#ffe27a', '#ffb347', '#fff'], minSpeed: 30, maxSpeed: 140, life: 0.2, size: 3, gravity: 0 });
-        flashes.push({ x: ev.x + ev.dir * 12, y: ev.y + 2, r: 150, t: 0.12, maxT: 0.12, color: '255,210,120' });
+        const big = ev.weapon === 'shotgun';
+        burst(ev.x + ev.dir * 6, ev.y + 2, big ? 10 : 5, { colors: ['#ffe27a', '#ffb347', '#fff'], minSpeed: 30, maxSpeed: big ? 220 : 140, life: 0.2, size: 3, gravity: 0 });
+        flashes.push({ x: ev.x + ev.dir * 12, y: ev.y + 2, r: big ? 200 : 150, t: 0.12, maxT: 0.12, color: '255,210,120' });
         anim(ev.id).recoil = 1;
-        SFX.shoot();
+        if (big) SFX.shotgun();
+        else if (ev.weapon === 'rapid') SFX.rapid();
+        else SFX.shoot();
         break;
       }
+      case 'clash': {
+        burst(ev.x, ev.y, 26, { colors: ['#fff6c2', '#ffd27f', '#ff8c42', '#ffffff'], minSpeed: 60, maxSpeed: 320, life: 0.6, size: 4, gravity: 200 });
+        flashes.push({ x: ev.x, y: ev.y, r: 260, t: 0.35, maxT: 0.35, color: '255,240,200' });
+        shake = Math.max(shake, 9);
+        hitStop = 0.05;
+        addFeed('💥 Střely se střetly, vzplál oheň!', '#ffb347');
+        SFX.clash();
+        break;
+      }
+      case 'ff':
+        burst(ev.x, ev.y, 6, { colors: ['#d61f1f', '#ffb3a7'], life: 0.4 });
+        if (ev.by === myId) floatingTexts.push({ x: ev.x, y: ev.y - 16, text: 'Kamarád!', color: '#ffb3a7', life: 0.9, size: 12 });
+        break;
+      case 'pickup': {
+        const info = PICKUP_INFO[ev.item] || { label: ev.item, color: '#fff' };
+        burst(ev.x, ev.y, 14, { colors: [info.color, '#ffffff'], minSpeed: 30, maxSpeed: 160, life: 0.6, gravity: -60, round: true });
+        flashes.push({ x: ev.x, y: ev.y, r: 120, t: 0.4, maxT: 0.4, color: '255,255,220' });
+        floatingTexts.push({ x: ev.x, y: ev.y - 20, text: info.label, color: info.color, life: 1.1, size: 13 });
+        if (ev.id === myId) SFX.pickup();
+        break;
+      }
+      case 'emote':
+        emoteBubbles.set(ev.id, { n: ev.n, t: 2.2 });
+        if (ev.n === 2) SFX.hit();
+        break;
+      case 'revived':
+        burst(ev.x, ev.y, 22, { colors: ['#dff3ff', '#7fe0a8', '#ffffff'], minSpeed: 20, maxSpeed: 150, life: 1, gravity: -80, round: true });
+        flashes.push({ x: ev.x, y: ev.y, r: 180, t: 0.6, maxT: 0.6, color: '200,240,255' });
+        addFeed(`✨ ${ev.byName} oživil(a) hráče ${ev.name}`, '#a8e6a1');
+        if (ev.id === myId) {
+          ghostHint = 0;
+          SFX.respawn();
+        }
+        if (ev.by === myId) scoreFlyers.push({ wx: ev.x, wy: ev.y - 20, t: 0, text: '+15', delta: 15 });
+        break;
+      case 'dig':
+        burst(ev.x, ev.y, 14, { colors: ['#6b4726', '#8a5a30', '#3b2a1a'], minSpeed: 40, maxSpeed: 160, life: 0.6, up: 120, size: 5 });
+        SFX.land();
+        break;
+      case 'emerge':
+        burst(ev.x, ev.y, 22, { colors: ['#6b4726', '#8a5a30', '#3b2a1a', '#4c9a3f'], minSpeed: 60, maxSpeed: 260, life: 0.7, up: 180, size: 6 });
+        shake = Math.max(shake, 6);
+        SFX.bite();
+        break;
       case 'hit':
         burst(ev.x, ev.y, 7, { colors: ['#e0561f', '#ff8c42', '#ffd9b3'], life: 0.4 });
         floatingTexts.push({ x: ev.x, y: ev.y - 10, text: '-10', color: '#fff', life: 0.6, size: 12 });
@@ -453,7 +576,7 @@ function handleEvents(events) {
         burst(ev.x, ev.y, 14 * big, { colors: ['#e0561f', '#ff8c42', '#ffffff'], maxSpeed: 260 * big, life: 0.8, up: 80 });
         burst(ev.x, ev.y, 8 * big, { colors: ['rgba(255,255,255,0.7)', '#ddd'], minSpeed: 10, maxSpeed: 50 * big, life: 0.9, size: 9 * big, gravity: -40, round: true });
         const fox = currSnap && currSnap.data.foxes.find((f) => f.id === ev.id);
-        dyingFoxes.push({ x: ev.x, y: ev.y, facing: fox ? fox.facing : 1, mega: !!ev.mega, scale: fox ? fox.w / 46 : 1, t: 0, maxT: ev.mega ? 1.1 : 0.7 });
+        dyingFoxes.push({ x: ev.x, y: ev.y, facing: fox ? fox.facing : 1, mega: !!ev.mega, kind: ev.foxKind, scale: fox ? fox.w / 46 : 1, t: 0, maxT: ev.mega ? 1.1 : 0.7 });
         if (ev.by === myId) {
           scoreFlyers.push({ wx: ev.x, wy: ev.y - 20, t: 0, text: `+${ev.score || 10}`, delta: ev.score || 10 });
           shake = Math.max(shake, ev.mega ? 12 : 4);
@@ -481,7 +604,9 @@ function handleEvents(events) {
       case 'death':
         burst(ev.x, ev.y, 24, { colors: ['#d61f1f', '#8f0e0e', '#ffffff'], maxSpeed: 300, life: 1, up: 120 });
         burst(ev.x, ev.y, 10, { colors: ['rgba(200,230,255,0.8)', 'rgba(255,255,255,0.6)'], minSpeed: 10, maxSpeed: 40, life: 1.2, size: 8, gravity: -80, round: true });
-        addFeed(`🦊 Lišky dostaly hráče ${ev.name}`, '#ff8b8b');
+        if (ev.by) addFeed(`🔫 ${ev.byName} zastřelil(a) kamaráda ${ev.name} (−20)`, '#ffb3a7');
+        else if (ev.fire) addFeed(`🔥 ${ev.name} uhořel(a)`, '#ffb347');
+        else addFeed(`🦊 Lišky dostaly hráče ${ev.name}`, '#ff8b8b');
         if (ev.id === myId) {
           shake = 16;
           hurtFlash = 1;
@@ -522,6 +647,9 @@ function handleEvents(events) {
         gameOver = null;
         ghostHint = 0;
         scoreShown = 0;
+        if (ev.platforms) platforms = ev.platforms;
+        if (ev.seed) buildScenery(ev.seed);
+        camInit = false;
         announce(`Kolo ${ev.number}`, 'Les je zase tichý. Zatím.', '#c9e6b8', '#2f6b32', 3);
         SFX.wave();
         break;
@@ -555,33 +683,31 @@ const LAYERS = [
   { parallax: 0.55, vp: 1, off: 6, count: 34, minH: 170, maxH: 300, color: '#1f5a38', trunk: '#3d2a18' },
 ];
 
-const forestLayers = LAYERS.map((layer, li) => {
-  const rnd = seeded(1234 + li * 999);
-  const span = world.width * layer.parallax + CAM.w * 2;
-  const trees = [];
-  for (let i = 0; i < layer.count; i++) {
-    trees.push({ x: rnd() * span, h: layer.minH + rnd() * (layer.maxH - layer.minH), w: 34 + rnd() * 40, conifer: rnd() < 0.7, phase: rnd() * 10 });
-  }
-  return { ...layer, trees, span };
-});
+let forestLayers = [];
+let fireflies = [];
+let groundDecor = [];
 
-const fireflies = (() => {
-  const rnd = seeded(77);
-  const list = [];
-  for (let i = 0; i < 70; i++) list.push({ x: rnd() * world.width, y: 320 + rnd() * 320, phase: rnd() * Math.PI * 2, speed: 0.5 + rnd() });
-  return list;
-})();
-
-// Ground decorations (stumps, rocks, mushrooms, ferns), deterministic.
-const groundDecor = (() => {
-  const rnd = seeded(4242);
-  const list = [];
-  for (let x = 40; x < world.width; x += 60 + rnd() * 120) {
-    const r = rnd();
-    list.push({ x, kind: r < 0.2 ? 'stump' : r < 0.45 ? 'rock' : r < 0.7 ? 'mushroom' : 'fern', s: 0.7 + rnd() * 0.6, flip: rnd() < 0.5 });
+function buildScenery(seed) {
+  forestLayers = LAYERS.map((layer, li) => {
+    const rnd = seeded(seed + 1234 + li * 999);
+    const span = world.width * layer.parallax + CAM.w * 2;
+    const trees = [];
+    for (let i = 0; i < layer.count; i++) {
+      trees.push({ x: rnd() * span, h: layer.minH + rnd() * (layer.maxH - layer.minH), w: 34 + rnd() * 40, conifer: rnd() < 0.7, phase: rnd() * 10 });
+    }
+    return { ...layer, trees, span };
+  });
+  const rf = seeded(seed + 77);
+  fireflies = [];
+  for (let i = 0; i < 70; i++) fireflies.push({ x: rf() * world.width, y: 320 + rf() * 320, phase: rf() * Math.PI * 2, speed: 0.5 + rf() });
+  const rd = seeded(seed + 4242);
+  groundDecor = [];
+  for (let x = 40; x < world.width; x += 60 + rd() * 120) {
+    const r = rd();
+    groundDecor.push({ x, kind: r < 0.2 ? 'stump' : r < 0.45 ? 'rock' : r < 0.7 ? 'mushroom' : 'fern', s: 0.7 + rd() * 0.6, flip: rd() < 0.5 });
   }
-  return list;
-})();
+}
+buildScenery(1);
 
 // Sky palettes: the forest gets darker and more ominous as waves progress.
 const SKY_EARLY = { top: [14, 29, 51], mid: [28, 58, 60], bottom: [46, 90, 58], moon: [245, 241, 214] };
@@ -911,9 +1037,24 @@ function drawShadow(g, x, w, bottom, camX, camY) {
   g.fill();
 }
 
+const fireGlows = [];
+function flashesLive(f, camX, camY) {
+  fireGlows.push({ x: f.x, y: f.y - 14, r: 150, a: 0.35 * Math.min(1, f.k * 1.5) });
+}
+
 function drawLights(g, camX, camY, playersR) {
   g.save();
   g.globalCompositeOperation = 'lighter';
+  for (const f of fireGlows) {
+    const cx = f.x - camX;
+    const cy = f.y - camY;
+    const grd = g.createRadialGradient(cx, cy, 6, cx, cy, f.r);
+    grd.addColorStop(0, `rgba(255,150,60,${f.a})`);
+    grd.addColorStop(1, 'rgba(255,150,60,0)');
+    g.fillStyle = grd;
+    g.fillRect(cx - f.r, cy - f.r, f.r * 2, f.r * 2);
+  }
+  fireGlows.length = 0;
   for (const p of playersR) {
     if (!p.alive) continue;
     const cx = p.rx + 15 - camX;
@@ -1066,14 +1207,23 @@ function drawHunter(g, p, x, y, time, isMe, camX, camY) {
 }
 
 function drawFoxSprite(g, opts) {
-  const { facing = 1, run = 0, air = false, bite = 0, hurt = false, alpha = 1, rot = 0, mega = false, scale = 1, time = 0 } = opts;
+  const { facing = 1, run = 0, air = false, bite = 0, hurt = false, alpha = 1, rot = 0, mega = false, scale = 1, time = 0, kind = 'normal' } = opts;
+  const PAL = {
+    normal: ['#e0561f', '#e8641f'],
+    fast: ['#d9a441', '#e8b85a'],
+    jumper: ['#5a6d84', '#6d8199'],
+    digger: ['#6b4a2a', '#7d5a36'],
+    mega: ['#b8391a', '#c9461f'],
+  }[kind] || ['#e0561f', '#e8641f'];
   g.save();
   g.globalAlpha = alpha;
   g.rotate(rot);
   g.scale(facing * scale, scale);
   if (air) g.scale(1.14, 0.86);
-  const fur = hurt ? '#ffb38a' : mega ? '#b8391a' : '#e0561f';
-  const furLight = hurt ? '#ffc39a' : mega ? '#c9461f' : '#e8641f';
+  if (kind === 'fast') g.scale(1.1, 0.9);
+  if (kind === 'jumper') g.scale(0.95, 1.1);
+  const fur = hurt ? '#ffb38a' : PAL[0];
+  const furLight = hurt ? '#ffc39a' : PAL[1];
 
   // Tail
   g.fillStyle = fur;
@@ -1088,12 +1238,19 @@ function drawFoxSprite(g, opts) {
   g.arc(-30, -9 + run * 3, 4, 0, Math.PI * 2);
   g.fill();
 
-  // Legs
-  g.fillStyle = '#3a1a08';
-  g.fillRect(-14 + run * 4, -10, 5, 10);
-  g.fillRect(-6 - run * 4, -10, 5, 10);
-  g.fillRect(6 + run * 4, -10, 5, 10);
-  g.fillRect(13 - run * 4, -10, 5, 10);
+  // Legs (jumpers have long ones)
+  const legH = kind === 'jumper' ? 14 : 10;
+  g.fillStyle = kind === 'jumper' ? '#2f3a48' : kind === 'digger' ? '#2b1a0c' : '#3a1a08';
+  g.fillRect(-14 + run * 4, -legH, 5, legH);
+  g.fillRect(-6 - run * 4, -legH, 5, legH);
+  g.fillRect(6 + run * 4, -legH, 5, legH);
+  g.fillRect(13 - run * 4, -legH, 5, legH);
+  if (kind === 'digger') {
+    // Big digging claws
+    g.fillStyle = '#d8c9a3';
+    g.fillRect(6 + run * 4, -1, 7, 2);
+    g.fillRect(13 - run * 4, -1, 7, 2);
+  }
 
   // Body
   g.fillStyle = furLight;
@@ -1193,7 +1350,33 @@ function drawFoxSprite(g, opts) {
   g.restore();
 }
 
+function drawMound(g, f, x, y, time) {
+  // Digger travelling underground: a moving mound of soil with crumbs flying off.
+  const w = f.w || 48;
+  const cx = x + w / 2;
+  const gy = y + (f.h || 26);
+  g.fillStyle = '#5a3a1f';
+  g.beginPath();
+  g.ellipse(cx, gy - 2, w * 0.55, 9 + Math.sin(time * 20) * 1.5, 0, Math.PI, 0);
+  g.fill();
+  g.fillStyle = '#7d5a36';
+  g.beginPath();
+  g.ellipse(cx - f.facing * 6, gy - 5, w * 0.3, 5, 0, Math.PI, 0);
+  g.fill();
+  g.fillStyle = '#3b2a1a';
+  for (let i = 0; i < 4; i++) {
+    const t = (time * 6 + i * 1.7) % 1;
+    g.globalAlpha = 1 - t;
+    g.fillRect(cx - f.facing * (10 + t * 26) + Math.sin(i * 9) * 8, gy - 6 - Math.sin(t * Math.PI) * 18, 3, 3);
+  }
+  g.globalAlpha = 1;
+}
+
 function drawFox(g, f, x, y, time, camX, camY) {
+  if (f.dug) {
+    drawMound(g, f, x, y, time);
+    return;
+  }
   const a = anim(f.id);
   const w = f.w || 46;
   const h = f.h || 28;
@@ -1204,7 +1387,7 @@ function drawFox(g, f, x, y, time, camX, camY) {
   g.save();
   g.translate(x + w / 2, y + h);
   g.scale(1 + a.squash * 0.15, 1 - a.squash * 0.2);
-  drawFoxSprite(g, { facing: f.facing, run, air: !f.onGround, bite: a.bite > 0 ? Math.sin((a.bite / 0.25) * Math.PI) : 0, hurt: a.hurt > 0, mega: f.mega, scale, time });
+  drawFoxSprite(g, { facing: f.facing, run, air: !f.onGround, bite: a.bite > 0 ? Math.sin((a.bite / 0.25) * Math.PI) : 0, hurt: a.hurt > 0, mega: f.mega, scale, time, kind: f.kind });
   g.restore();
   if (f.mega || f.hp < f.maxHp) {
     const bw = f.mega ? 60 : 28;
@@ -1225,7 +1408,7 @@ function drawDyingFox(g, d, camX, camY) {
   const k = d.t / d.maxT;
   g.save();
   g.translate(d.x - camX, d.y - camY + 14 * (d.scale || 1) - Math.sin(k * Math.PI) * 30);
-  drawFoxSprite(g, { facing: d.facing, run: 0, alpha: 1 - k * k, rot: -d.facing * k * 3.2, mega: d.mega, scale: d.scale || 1 });
+  drawFoxSprite(g, { facing: d.facing, run: 0, alpha: 1 - k * k, rot: -d.facing * k * 3.2, mega: d.mega, scale: d.scale || 1, kind: d.kind });
   g.restore();
 }
 
@@ -1264,6 +1447,122 @@ function drawGhost(g, p, x, y, time, isMe) {
   g.fillStyle = 'rgba(223,243,255,0.8)';
   g.strokeText(`${p.name} 👻`, cx, y - 14 + bob);
   g.fillText(`${p.name} 👻`, cx, y - 14 + bob);
+  if (p.revive > 0) {
+    g.strokeStyle = 'rgba(0,0,0,0.5)';
+    g.lineWidth = 5;
+    g.beginPath();
+    g.arc(cx, y + 20 + bob, 22, 0, Math.PI * 2);
+    g.stroke();
+    g.strokeStyle = '#7fe0a8';
+    g.lineWidth = 4;
+    g.beginPath();
+    g.arc(cx, y + 20 + bob, 22, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * p.revive);
+    g.stroke();
+    g.font = `800 10px ${FONT_BODY}`;
+    g.fillStyle = '#7fe0a8';
+    g.fillText(`${Math.ceil((1 - p.revive) * 3)} s`, cx, y + 58 + bob);
+  }
+}
+
+function drawPickup(g, pk, x, y, time) {
+  const info = PICKUP_INFO[pk.kind] || PICKUP_INFO.medkit;
+  const bob = Math.sin(time * 3 + pk.id) * 3;
+  const blink = pk.life <= 5 && Math.sin(time * 12) > 0;
+  g.save();
+  g.globalAlpha = blink ? 0.35 : 1;
+  g.translate(x + 11, y + 11 + bob);
+  // Glow
+  g.fillStyle = `${info.color}44`;
+  g.beginPath();
+  g.arc(0, 0, 18, 0, Math.PI * 2);
+  g.fill();
+  // Crate
+  g.fillStyle = '#8a5a30';
+  roundRect(g, -11, -11, 22, 22, 4);
+  g.fill();
+  g.strokeStyle = '#2b1708';
+  g.lineWidth = 2;
+  g.stroke();
+  g.fillStyle = info.color;
+  g.font = `900 15px ${FONT_BODY}`;
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillText(info.icon, 0, 1);
+  g.textBaseline = 'alphabetic';
+  g.restore();
+  g.fillStyle = 'rgba(0,0,0,0.3)';
+  g.beginPath();
+  g.ellipse(x + 11, y + 24, 10, 3, 0, 0, Math.PI * 2);
+  g.fill();
+}
+
+function drawFire(g, f, x, y, time) {
+  // f.k = remaining life fraction; the fire shrinks as it dies out.
+  const k = 0.35 + 0.65 * Math.min(1, f.k * 1.5);
+  g.save();
+  g.translate(x, y);
+  // Scorched ground
+  g.fillStyle = 'rgba(20,10,5,0.55)';
+  g.beginPath();
+  g.ellipse(0, 1, 38 * k + 6, 5, 0, 0, Math.PI * 2);
+  g.fill();
+  // Flames: several flickering tongues
+  for (let i = 0; i < 7; i++) {
+    const ph = time * (6 + i) + i * 1.3;
+    const fx = (i - 3) * 9 * k + Math.sin(ph) * 3;
+    const fh = (22 + Math.sin(ph * 1.7) * 8 + (i % 2) * 8) * k;
+    const fw = (7 + (i % 3) * 2) * k;
+    const grd = g.createLinearGradient(0, 0, 0, -fh);
+    grd.addColorStop(0, 'rgba(255,120,30,0.95)');
+    grd.addColorStop(0.5, 'rgba(255,200,60,0.9)');
+    grd.addColorStop(1, 'rgba(255,240,180,0.2)');
+    g.fillStyle = grd;
+    g.beginPath();
+    g.moveTo(fx - fw, 0);
+    g.quadraticCurveTo(fx - fw * 0.6, -fh * 0.5, fx + Math.sin(ph * 2) * 3, -fh);
+    g.quadraticCurveTo(fx + fw * 0.6, -fh * 0.5, fx + fw, 0);
+    g.closePath();
+    g.fill();
+  }
+  // Embers
+  g.fillStyle = '#ffd27f';
+  for (let i = 0; i < 5; i++) {
+    const t = (time * 1.2 + i * 0.37) % 1;
+    g.globalAlpha = (1 - t) * k;
+    g.fillRect((i - 2) * 10 * k + Math.sin(time * 5 + i) * 5, -t * 60 - 10, 2, 2);
+  }
+  g.restore();
+}
+
+function drawEmote(g, p, x, y, time, dt) {
+  const b = emoteBubbles.get(p.id);
+  if (!b) return;
+  b.t -= dt;
+  if (b.t <= 0) {
+    emoteBubbles.delete(p.id);
+    return;
+  }
+  const text = EMOTES[b.n] || '';
+  const a = Math.min(1, b.t * 3);
+  const pop = 1 + Math.max(0, 0.3 - (2.2 - b.t)) * 2;
+  g.save();
+  g.globalAlpha = a;
+  g.translate(x + 15, y - 40);
+  g.scale(pop, pop);
+  g.font = `800 12px ${FONT_BODY}`;
+  const w = g.measureText(text).width + 16;
+  g.fillStyle = '#f3ecd8';
+  roundRect(g, -w / 2, -12, w, 22, 8);
+  g.fill();
+  g.beginPath();
+  g.moveTo(-5, 10);
+  g.lineTo(0, 17);
+  g.lineTo(5, 10);
+  g.fill();
+  g.fillStyle = '#2b1708';
+  g.textAlign = 'center';
+  g.fillText(text, 0, 4);
+  g.restore();
 }
 
 function drawBullet(g, b, x, y) {
@@ -1366,6 +1665,14 @@ function drawMinimap(g, snap, camX, camY) {
   g.strokeStyle = 'rgba(255,255,255,0.35)';
   g.lineWidth = 1;
   g.strokeRect(ix + camX * sx, iy + camY * sy, CAM.w * sx, CAM.h * sy);
+  for (const pk of snap.pickups || []) {
+    g.fillStyle = (PICKUP_INFO[pk.kind] || PICKUP_INFO.medkit).color;
+    g.fillRect(ix + pk.x * sx - 1.5, iy + pk.y * sy - 1.5, 3, 3);
+  }
+  for (const f of snap.fires || []) {
+    g.fillStyle = '#ffb347';
+    g.fillRect(ix + f.x * sx - 2, iy + f.y * sy - 2, 4, 4);
+  }
   for (const f of snap.foxes) {
     const r = f.mega ? 3 : 1.5;
     g.fillStyle = f.mega ? '#ff4d2e' : '#ff8c42';
@@ -1398,6 +1705,21 @@ function drawHUD(g, me, snap, dt) {
   g.fillStyle = '#f3ecd8';
   g.font = `800 11px ${FONT_BODY}`;
   g.fillText(`${hp}`, 150, 78);
+  // Active weapon / boost
+  if (me && me.alive) {
+    const items = [];
+    if (me.weapon && me.weapon !== 'rifle') items.push({ info: PICKUP_INFO[me.weapon], t: me.weaponT });
+    if (me.speedT > 0) items.push({ info: PICKUP_INFO.speed, t: me.speedT });
+    items.forEach((it, i) => {
+      const x = 176 + i * 40;
+      g.fillStyle = 'rgba(0,0,0,0.35)';
+      roundRect(g, x, 62, 36, 22, 4);
+      g.fill();
+      g.fillStyle = it.info.color;
+      g.font = `900 13px ${FONT_BODY}`;
+      g.fillText(`${it.info.icon}${it.t}`, x + 5, 78);
+    });
+  }
 
   // ---- Right: scoreboard
   const sorted = [...snap.players].sort((a, b) => b.score - a.score).slice(0, 8);
@@ -1418,7 +1740,8 @@ function drawHUD(g, me, snap, dt) {
     g.fill();
     g.fillStyle = p.id === myId ? '#ffd27f' : p.alive ? '#f3ecd8' : '#a08c78';
     g.textAlign = 'left';
-    g.fillText(`${i + 1}. ${p.name}${p.alive ? '' : ' 👻'}`, bx + 30, yy);
+    const tag = !p.alive ? ' 👻' : p.weapon && p.weapon !== 'rifle' ? ` ${PICKUP_INFO[p.weapon].icon}` : '';
+    g.fillText(`${i + 1}. ${p.name}${tag}`, bx + 30, yy);
     g.textAlign = 'right';
     if (p.id === myId) {
       g.save();
@@ -1506,7 +1829,7 @@ function drawGhostHint(g, me, dt) {
   g.fillText('Lišky tě dostaly. Teď jsi duch.', VIEW.w / 2, py + 30);
   g.font = `700 12px ${FONT_BODY}`;
   g.fillStyle = '#f3ecd8';
-  g.fillText(`Přežil(a) jsi ${me.survived} s, ulovil(a) ${me.lifeKills} lišek. Poletuj (W/S) a fanděte ostatním.`, VIEW.w / 2, py + 52);
+  g.fillText(`Přežil(a) jsi ${me.survived} s. Přileť k živému lovci, ať tě oživí klávesou E (10 HP).`, VIEW.w / 2, py + 52);
   g.restore();
 }
 
@@ -1669,11 +1992,19 @@ function frame(realNow) {
   }
   for (const [id, a] of anims) if (now - a.lastSeen > 5000) anims.delete(id);
 
-  // Camera
-  const targetX = me ? me.rx + 15 - CAM.w / 2 + me.facing * 40 : world.width / 2 - CAM.w / 2;
-  const targetY = me ? me.ry + 24 - CAM.h * 0.6 : world.height - CAM.h;
-  const camX = clamp(targetX, 0, world.width - CAM.w);
-  const camY = clamp(targetY, 0, world.height - CAM.h);
+  // Camera: the look-ahead eases in when the hunter turns, and the camera itself follows softly.
+  const lookTarget = me ? me.facing * 55 : 0;
+  camLook += (lookTarget - camLook) * Math.min(1, dt * 2.2);
+  const targetX = clamp(me ? me.rx + 15 - CAM.w / 2 + camLook : world.width / 2 - CAM.w / 2, 0, world.width - CAM.w);
+  const targetY = clamp(me ? me.ry + 24 - CAM.h * 0.6 : world.height - CAM.h, 0, world.height - CAM.h);
+  if (!camInit) {
+    camX = targetX;
+    camY = targetY;
+    camInit = true;
+  } else {
+    camX += (targetX - camX) * Math.min(1, dt * 9);
+    camY += (targetY - camY) * Math.min(1, dt * 5);
+  }
 
   shake = Math.max(0, shake - dt * 30);
   const sx = shake ? rand(-shake, shake) : 0;
@@ -1706,12 +2037,33 @@ function frame(realNow) {
   drawBackground(ctx, camX, camY, time, snap.wave);
   drawPlatforms(ctx, camX, camY, time);
 
+  for (const pk of snap.pickups || []) drawPickup(ctx, pk, pk.x - camX, pk.y - camY, time);
   for (const b of bulletsR) drawBullet(ctx, b, b.rx - camX, b.ry - camY);
   for (const d of dyingFoxes) drawDyingFox(ctx, d, camX, camY);
   for (const f of foxesR) drawFox(ctx, f, f.rx - camX, f.ry - camY, time, camX, camY);
   for (const p of playersR) {
     if (p.alive) drawHunter(ctx, p, p.rx - camX, p.ry - camY, time, p.id === myId, camX, camY);
     else drawGhost(ctx, p, p.rx - camX, p.ry - camY, time, p.id === myId);
+    drawEmote(ctx, p, p.rx - camX, p.ry - camY, time, dt);
+  }
+  for (const f of snap.fires || []) {
+    drawFire(ctx, f, f.x - camX, f.y - camY, time);
+    flashesLive(f, camX, camY);
+  }
+  // Revive prompt for me: a ghost is close enough
+  if (me && me.alive) {
+    const near = playersR.find((g) => !g.alive && Math.abs(g.rx - me.rx) < 66 && Math.abs(g.ry - me.ry) < 84);
+    if (near) {
+      ctx.font = `800 11px ${FONT_BODY}`;
+      ctx.textAlign = 'center';
+      const text = me.reviving ? `Oživuji ${near.name}… stůj a nestřílej` : `Drž E: oživit ${near.name}`;
+      const w = ctx.measureText(text).width + 14;
+      ctx.fillStyle = 'rgba(20,12,5,0.7)';
+      roundRect(ctx, me.rx + 15 - camX - w / 2, me.ry - camY - 58, w, 18, 4);
+      ctx.fill();
+      ctx.fillStyle = me.reviving ? '#7fe0a8' : '#ffd27f';
+      ctx.fillText(text, me.rx + 15 - camX, me.ry - camY - 45);
+    }
   }
 
   // Particles

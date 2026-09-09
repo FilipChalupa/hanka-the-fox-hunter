@@ -22,10 +22,13 @@ a hrajete spolu.
 | Pohyb   | `A`/`D` nebo `←`/`→`                     |
 | Skok    | `W`, `↑` nebo `Space`                    |
 | Střelba | `Ctrl`, `F` nebo `X`                     |
+| Oživení | drž `E` vedle ducha (3 s, nehýbat se, nestřílet) |
+| Emoty   | `1` 👍, `2` 🆘, `3` 😂, `4` ❤️            |
 | Duch    | `W`/`↑` nahoru, `S`/`↓` dolů             |
 
-Na dotykových zařízeních se zobrazí tlačítka na obrazovce. Duchové létají
-pomocí `W`/`S` (nahoru/dolů) a `A`/`D`.
+Na dotykových zařízeních je vlevo virtuální joystick (pohyb, skok tahem
+nahoru, duch létá všemi směry), vpravo tlačítka skok, střelba a oživení,
+nahoře řada emotů.
 
 ## Pravidla
 
@@ -38,6 +41,19 @@ pomocí `W`/`S` (nahoru/dolů) a `A`/`D`.
   od vlny 1. Kdo se připojí během přestávky, čeká jako duch.
 - Každou třetí vlnu přijde **mega liška** (dvojnásobná, 150+ HP, kousne za 30,
   za 50 bodů). Od vlny 9 přicházejí dvě, od vlny 15 tři.
+- Druhy lišek: **rychlá** (od vlny 2, malá, 12 HP, +15), **skákavá** (od vlny 3,
+  vyskočí na každou plošinu, +15), **hrabavá** (od vlny 4, cestuje pod zemí jako
+  krtina, nejde zasáhnout, vyskočí pod obětí, kouše za 18, +20).
+- **Friendly fire**: kulka zraní i kamaráda za 10 HP. Zastřelit spoluhráče
+  stojí 20 bodů.
+- **Oživení**: duch přiletí k živému lovci, ten se postaví, drží `E` a 3 s se
+  nehýbe ani nestřílí. Duch se vrátí s 10 HP, oživující dostane 15 bodů.
+- **Vylepšení** padají z lišek (8 %, z mega lišky 60 %) a občas se objeví na
+  plošinách: lékárnička (+40 HP), brokovnice (3 broky, 12 s), rychlopalba
+  (10 s), rychlé nohy (12 s).
+- **Střet střel**: když se kulky dvou lovců potkají, zruší se, zableskne a na
+  zemi vzplane oheň na 6 s. Pálí lovce i lišky; lišky se mu vyhýbají.
+- Les (plošiny, stromy, dekorace) se generuje znovu každé kolo.
 - Dřevěné plošiny jsou průchozí zespodu (jde na ně vyskočit).
 - Každý hráč má jiný outfit: první v lese dostane mysliveckou zelenou, další
   nejnižší volnou paletu z osmi. Outfit jde vybrat i ručně na úvodní obrazovce.
@@ -65,11 +81,11 @@ pomocí `W`/`S` (nahoru/dolů) a `A`/`D`.
 
 ## Protokol
 
-Klient → server: `{t:'join', name, outfit?}`, `{t:'input', left, right, jump, down, shoot}`, `{t:'ping', ts}`
+Klient → server: `{t:'join', name, outfit?}`, `{t:'input', left, right, jump, down, shoot, revive}`, `{t:'emote', n}`, `{t:'ping', ts}`
 
-Server → klient: `{t:'welcome', id, world, platforms}`, `{t:'state', players, foxes, bullets, events, wave, kills, maxFoxes, round}`, `{t:'pong', ts}`
+Server → klient: `{t:'welcome', id, world, platforms, seed}`, `{t:'state', players, foxes, bullets, pickups, fires, events, wave, kills, maxFoxes, round}`, `{t:'pong', ts}`
 
-Události ve `state.events`: `shoot`, `hit`, `kill` (s `mega`, `score`), `hurt`, `bite`, `death`, `respawn`, `jump`, `foxjump`, `wave`, `mega`, `gameover`, `newround`, `join`, `leave`.
+Události ve `state.events`: `shoot`, `hit`, `kill` (s `foxKind`, `mega`, `score`), `hurt`, `bite`, `death` (s `by` při friendly fire, `fire` při uhoření), `respawn`, `revived`, `ff`, `clash`, `pickup`, `emote`, `dig`, `emerge`, `jump`, `foxjump`, `wave`, `mega`, `gameover`, `newround` (s novými `platforms` a `seed`), `join`, `leave`.
 
 ## Vykreslování
 
