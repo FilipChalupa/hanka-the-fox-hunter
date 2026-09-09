@@ -25,8 +25,9 @@ const FOX_KINDS = {
 };
 const MEGA_EVERY = 3;
 
-// Bullets are drawn thin but hit a 10 px band so even the small fast fox can be shot on flat ground.
-const BULLET = { speed: 1000, life: 1.1, w: 10, h: 10 };
+// Bullets leave the muzzle at rifle height and are drawn there; their hitbox reaches 22 px
+// below that, so a shot fired from the hip still catches the small fast fox on flat ground.
+const BULLET = { speed: 1000, life: 1.1, w: 10, h: 22 };
 const WEAPONS = {
   rifle:   { cooldown: 0.22, damage: 10, pellets: 1, spread: 0 },
   shotgun: { cooldown: 0.28, damage: 9, pellets: 3, spread: 140, duration: 12 },
@@ -233,7 +234,7 @@ class Game {
   fireBullets(p) {
     const weapon = WEAPONS[p.weapon] || WEAPONS.rifle;
     p.shootTimer = weapon.cooldown;
-    const gunY = p.y + 26;
+    const gunY = p.y + 19;
     const bx = p.facing > 0 ? p.x + p.w + 4 : p.x - BULLET.w - 4;
     for (let i = 0; i < weapon.pellets; i++) {
       const k = weapon.pellets === 1 ? 0 : i / (weapon.pellets - 1) - 0.5;

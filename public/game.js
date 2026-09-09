@@ -2165,13 +2165,14 @@ function drawBullet(g, b, x, y) {
   g.save();
   g.shadowColor = '#ffe27a';
   g.shadowBlur = 10;
+  // Drawn at the top of the hitbox: that is where the muzzle is.
   g.fillStyle = b.fire ? '#ffb347' : '#fff4b0';
-  g.fillRect(x, y + 3, 10, 4);
+  g.fillRect(x, y, 10, 4);
   g.fillStyle = b.fire ? 'rgba(255,90,30,0.8)' : 'rgba(255,179,71,0.6)';
-  g.fillRect(b.dir > 0 ? x - 14 : x + 10, y + 4, 14, 2);
+  g.fillRect(b.dir > 0 ? x - 14 : x + 10, y + 1, 14, 2);
   if (b.fire) {
     g.fillStyle = 'rgba(255,200,80,0.9)';
-    g.fillRect(x + 2, y + 1, 5, 2);
+    g.fillRect(x + 2, y - 2, 5, 2);
   }
   g.restore();
 }
