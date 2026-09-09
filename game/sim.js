@@ -10,7 +10,7 @@ const { WORLD, PLAYER: PMOVE, clamp, overlaps, generateWorld, stepPhysics, groun
 const PLAYER = {
   ...PMOVE,
   shootCooldown: 0.22, invuln: 0.6,
-  reviveTime: 3, reviveHp: 10, reviveReach: 36,
+  reviveTime: 3, reviveHp: 10, reviveReach: 36, reviveInvuln: 3,
   friendlyFire: 10, teamKillPenalty: 20,
   disconnectGrace: 60,
 };
@@ -22,8 +22,11 @@ const FOX_KINDS = {
   jumper: { w: 44, h: 30, hp: 30, hpPerWave: 5, damage: 12, bite: 0.9, jump: 900, speed: [130, 160], speedPerWave: 8, score: 15, minWave: 3, weight: 2 },
   digger: { w: 48, h: 26, hp: 40, hpPerWave: 6, damage: 18, bite: 1.1, jump: 560, speed: [90, 120], speedPerWave: 6, score: 20, minWave: 4, weight: 2 },
   mega:   { w: 92, h: 56, hp: 150, hpPerWave: 15, damage: 30, bite: 1.2, jump: 820, speed: [95, 120], speedPerWave: 5, score: 50, minWave: 3, weight: 0 },
+  // The Fox Mother: the round's boss. Phase 1 she fights alone, phase 2 she howls the pack out of the dens.
+  mother: { w: 130, h: 80, hp: 600, hpPerWave: 0, damage: 35, bite: 1.3, jump: 900, speed: [105, 125], speedPerWave: 0, score: 300, minWave: 99, weight: 0 },
 };
 const MEGA_EVERY = 3;
+const BOSS = { wave: 10, hpPerPlayer: 150, howlEvery: 6, howlCount: 3, stompRadius: 170, stompDamage: 15 };
 
 // Bullets leave the muzzle at rifle height and are drawn there; their hitbox reaches 22 px
 // below that, so a shot fired from the hip still catches the small fast fox on flat ground.
@@ -34,22 +37,24 @@ const WEAPONS = {
   rapid:   { cooldown: 0.08, damage: 7, pellets: 1, spread: 0, duration: 10 },
 };
 // Pickups. `held` items go to the hunter's hand and are placed/used with the use key.
+// `minWave` unlocks kinds as the round progresses, so there is something new to find later on.
 const PICKUPS = {
-  medkit: { weight: 4 },
-  shotgun: { weight: 3 },
-  rapid: { weight: 3 },
-  speed: { weight: 2, duration: 12 },
-  stink: { weight: 2, duration: 10 },
-  incendiary: { weight: 2, duration: 10 },
-  double: { weight: 2, duration: 15 },
-  disguise: { weight: 2, duration: 8 },
-  trap: { weight: 3, held: true },
-  horn: { weight: 2, held: true },
-  seed: { weight: 2, held: true },
-  lantern: { weight: 2, held: true },
-  bait: { weight: 3, held: true },
-  curse: { weight: 2 },
+  medkit: { weight: 4, minWave: 1 },
+  shotgun: { weight: 3, minWave: 1 },
+  rapid: { weight: 3, minWave: 2 },
+  speed: { weight: 2, duration: 12, minWave: 2 },
+  stink: { weight: 2, duration: 10, minWave: 3 },
+  trap: { weight: 3, held: true, minWave: 3 },
+  bait: { weight: 3, held: true, minWave: 3 },
+  incendiary: { weight: 2, duration: 10, minWave: 4 },
+  horn: { weight: 2, held: true, minWave: 4 },
+  curse: { weight: 2, minWave: 4 },
+  double: { weight: 2, duration: 15, minWave: 5 },
+  lantern: { weight: 2, held: true, minWave: 5 },
+  disguise: { weight: 2, duration: 8, minWave: 6 },
+  seed: { weight: 2, held: true, minWave: 6 },
 };
+const THROW = { vx: 430, vy: -330, gravity: 1500, noPick: 0.7 };
 const TRAP = { w: 30, h: 8, arm: 0.5, life: 40, hold: 3 };
 const LURES = { bait: { life: 8, radius: 500, w: 24, h: 10 }, lantern: { life: 20, radius: 400, w: 16, h: 18 } };
 const HORN = { duration: 4 };
@@ -99,7 +104,11 @@ class Game {
     this.time = 0;
     this.announcedWave = 1;
     this.breather = 0;
-    this.round = { number: 1, over: false, restartTimer: 0 };
+    this.round = { number: 1, over: false, won: false, restartTimer: 0 };
+    this.bossId = 0;
+    this.bossPhase = 0;
+    this.howlTimer = 0;
+    this.teamStats = { firstDeathWave: 0, bothDens: false };
     this.weather = { kind: 'clear', t: 0 };
     this.weatherTimer = rand(WEATHER.gap[0], WEATHER.gap[1]);
     this.lightningTimer = 0;
@@ -166,8 +175,8 @@ class Game {
       weapon: 'rifle', weaponTimer: 0, speedTimer: 0, stinkTimer: 0, incTimer: 0, doubleTimer: 0, disguiseTimer: 0, item: null,
       reviveProgress: 0, reviver: 0, reviving: 0,
       spawnedAt: this.time, lastSurvival: 0, lifeKills: 0, bestSurvival: 0, bestLifeKills: 0, bestScore: 0,
-      input: { left: false, right: false, jump: false, shoot: false, down: false, revive: false, dash: 0, use: false },
-      seq: 0,
+      input: { left: false, right: false, jump: false, shoot: false, down: false, revive: false, dash: 0, use: false, throw: 0 },
+      seq: 0, fragile: false,
     };
     this.players.set(id, p);
     this.push({ kind: 'join', id, name, ghost: !p.alive });
@@ -187,7 +196,7 @@ class Game {
     if (!p) return;
     p.connected = false;
     p.disconnectedAt = this.time;
-    p.input = { left: false, right: false, jump: false, shoot: false, down: false, revive: false, dash: 0, use: false };
+    p.input = { left: false, right: false, jump: false, shoot: false, down: false, revive: false, dash: 0, use: false, throw: 0 };
     this.push({ kind: 'away', id, name: p.name });
   }
 
@@ -214,6 +223,7 @@ class Game {
     i.revive = !!msg.revive;
     if (msg.dash === 1 || msg.dash === -1) i.dash = msg.dash;
     if (msg.use) i.use = true;
+    if (msg.throw === 1 || msg.throw === -1) i.throw = msg.throw;
     if (Number.isFinite(msg.seq)) p.seq = msg.seq;
   }
 
@@ -257,7 +267,7 @@ class Game {
   }
 
   reviveGhost(g, by) {
-    Object.assign(g, { alive: true, hp: PLAYER.reviveHp, spawnedAt: this.time, lifeKills: 0, reviveProgress: 0, reviver: 0, x: by.x, y: by.y, vx: 0, vy: 0, invulnTimer: 2, weapon: 'rifle', climbing: false });
+    Object.assign(g, { alive: true, hp: PLAYER.reviveHp, spawnedAt: this.time, lifeKills: 0, reviveProgress: 0, reviver: 0, x: by.x, y: by.y, vx: 0, vy: 0, invulnTimer: PLAYER.reviveInvuln, weapon: 'rifle', climbing: false, fragile: true });
     by.score += 15;
     by.roundRevives++;
     by.totalRevives++;
@@ -326,8 +336,15 @@ class Game {
       inp.use = false;
       if (p.item && !p.climbing && p.dashT <= 0) this.useItem(p);
     }
+    if (inp.throw) {
+      const dir = inp.throw;
+      inp.throw = 0;
+      if (p.item && !p.climbing) this.throwItem(p, dir);
+    }
+    if (p.fragile && p.hp >= 40) p.fragile = false;
 
     for (const pk of this.pickups.values()) {
+      if (pk.noPick && pk.noPick.id === p.id && pk.noPick.t > 0) continue;
       if (overlaps(p, pk)) {
         this.pickups.delete(pk.id);
         this.applyPickup(p, pk);
@@ -337,7 +354,10 @@ class Game {
 
   applyPickup(p, pk) {
     const k = pk.kind;
-    if (k === 'medkit') p.hp = Math.min(PLAYER.hp, p.hp + 40);
+    if (k === 'medkit') {
+      p.hp = Math.min(PLAYER.hp, p.hp + 40);
+      p.fragile = false;
+    }
     else if (k === 'speed') p.speedTimer = PICKUPS.speed.duration;
     else if (k === 'stink') p.stinkTimer = PICKUPS.stink.duration;
     else if (k === 'incendiary') p.incTimer = PICKUPS.incendiary.duration;
@@ -362,6 +382,18 @@ class Game {
       p.weaponTimer = WEAPONS[k].duration;
     }
     this.push({ kind: 'pickup', id: p.id, item: k, x: pk.x + pk.w / 2, y: pk.y + pk.h / 2 });
+  }
+
+  throwItem(p, dir) {
+    const id = this.nextId++;
+    const kind = p.item;
+    p.item = null;
+    p.facing = dir;
+    this.pickups.set(id, {
+      id, kind, look: kind, x: p.x + p.w / 2 - PICKUP.w / 2 + dir * 18, y: p.y + 6, w: PICKUP.w, h: PICKUP.h, life: PICKUP.life,
+      vx: dir * THROW.vx, vy: THROW.vy, air: true, noPick: { id: p.id, t: THROW.noPick },
+    });
+    this.push({ kind: 'throw', id: p.id, item: kind, x: p.x + p.w / 2, y: p.y + 10, dir });
   }
 
   useItem(p) {
@@ -436,6 +468,7 @@ class Game {
       p.bestScore = Math.max(p.bestScore, p.score);
       p.reviveProgress = 0;
       p.vy = -120;
+      if (!this.teamStats.firstDeathWave) this.teamStats.firstDeathWave = this.wave;
       const ev = { kind: 'death', id: p.id, name: p.name, x: p.x + p.w / 2, y: p.y + p.h / 2 };
       if (source && source.kind === 'player') {
         const killer = this.players.get(source.id);
@@ -479,15 +512,30 @@ class Game {
     }));
   }
 
+  teamBadges(won) {
+    const out = [];
+    const revives = [...this.players.values()].reduce((n, p) => n + p.roundRevives, 0);
+    if (won) out.push('Liščí matka poražena');
+    if (this.wave >= 5 && (!this.teamStats.firstDeathWave || this.teamStats.firstDeathWave >= 5)) out.push('Nikdo neumřel do vlny 5');
+    if (this.teamStats.bothDens) out.push('Zavaleny obě nory najednou');
+    if (revives >= 3) out.push('Tři oživení v jednom kole');
+    return out;
+  }
+
+  endRound(won) {
+    this.round.over = true;
+    this.round.won = won;
+    this.round.restartTimer = ROUND_RESTART + (won ? 4 : 0);
+    const summary = { wave: this.wave, kills: this.totalKills, ranking: this.ranking(), teamBadges: this.teamBadges(won), round: this.round.number, restartIn: this.round.restartTimer, won };
+    for (const p of this.players.values()) p.rounds++;
+    this.push({ kind: won ? 'victory' : 'gameover', ...summary });
+    if (this.onGameOver) this.onGameOver(summary);
+  }
+
   checkRoundOver() {
     if (this.round.over || this.players.size === 0) return;
     for (const p of this.players.values()) if (p.alive) return;
-    this.round.over = true;
-    this.round.restartTimer = ROUND_RESTART;
-    const summary = { wave: this.wave, kills: this.totalKills, ranking: this.ranking(), round: this.round.number, restartIn: ROUND_RESTART };
-    for (const p of this.players.values()) p.rounds++;
-    this.push({ kind: 'gameover', ...summary });
-    if (this.onGameOver) this.onGameOver(summary);
+    this.endRound(false);
   }
 
   clearWorld() {
@@ -504,6 +552,10 @@ class Game {
     this.breather = 0;
     this.spawnTimer = 3;
     this.pickupTimer = 10;
+    this.bossId = 0;
+    this.bossPhase = 0;
+    this.howlTimer = 0;
+    this.teamStats = { firstDeathWave: 0, bothDens: false };
     this.weather = { kind: 'clear', t: 0 };
     this.weatherTimer = rand(WEATHER.gap[0], WEATHER.gap[1]);
     this.roundStartedAt = this.time;
@@ -513,6 +565,7 @@ class Game {
   startRound() {
     this.round.number++;
     this.round.over = false;
+    this.round.won = false;
     this.clearWorld();
     for (const p of this.players.values()) this.respawnPlayer(p);
     this.push({ kind: 'newround', number: this.round.number, world: this.world });
@@ -521,6 +574,7 @@ class Game {
   resetWorld() {
     this.clearWorld();
     this.round.over = false;
+    this.round.won = false;
     this.round.restartTimer = 0;
   }
 
@@ -538,9 +592,9 @@ class Game {
     const wave = this.wave;
     const K = FOX_KINDS[kind];
     const id = this.nextId++;
-    const hp = K.hp + Math.floor(wave / 2) * K.hpPerWave;
+    const hp = K.hp + Math.floor(wave / 2) * K.hpPerWave + (kind === 'mother' ? BOSS.hpPerPlayer * Math.max(0, this.connectedCount() - 1) : 0);
     const fox = {
-      id, kind, mega: kind === 'mega',
+      id, kind, mega: kind === 'mega', boss: kind === 'mother',
       x: den.x + den.w / 2 - K.w / 2, y: WORLD.groundY - K.h, vx: 0, vy: 0, w: K.w, h: K.h,
       hp, maxHp: hp, speed: rand(K.speed[0], K.speed[1]) + wave * K.speedPerWave,
       damage: K.damage, jump: K.jump, biteCooldown: K.bite, score: K.score,
@@ -564,7 +618,7 @@ class Game {
     let lure = null;
     let lureD = Infinity;
     const fcx = fox.x + fox.w / 2;
-    for (const l of this.lures.values()) {
+    for (const l of fox.boss ? [] : this.lures.values()) {
       const d = Math.abs(l.x + l.w / 2 - fcx);
       if (d < l.radius && d < lureD) {
         lureD = d;
@@ -646,7 +700,7 @@ class Game {
     const fcx = fox.x + fox.w / 2;
 
     // Stink: a reeking hunter drives nearby foxes the other way (mega foxes have no nose for it).
-    const stinker = fox.mega ? null : this.nearestStinker(fox);
+    const stinker = fox.mega || fox.boss ? null : this.nearestStinker(fox);
     if (stinker) {
       if (!fox.fleeing) this.push({ kind: 'foxflee', id: fox.id, x: fcx, y: fox.y });
       fox.fleeing = true;
@@ -726,7 +780,7 @@ class Game {
         fox.bestDist = dist;
         fox.stuckT = 0;
       } else fox.stuckT += dt;
-      if (fox.stuckT > FOX_AI.giveUpAfter && !fox.mega) {
+      if (fox.stuckT > FOX_AI.giveUpAfter && !fox.mega && !fox.boss) {
         fox.roam = this.planRoam(fox, target);
         this.push({ kind: 'foxgiveup', id: fox.id, x: fcx, y: fox.y });
       }
@@ -810,7 +864,9 @@ class Game {
       fox.facing = away;
     }
 
+    const wasAir = !fox.onGround;
     stepPhysics(fox, dt, this.world.platforms);
+    if (fox.boss && wasAir && fox.onGround) this.stomp(fox);
 
     if (fox.biteTimer <= 0) {
       for (const p of this.players.values()) {
@@ -835,12 +891,53 @@ class Game {
     return { steps };
   }
 
+  stomp(fox) {
+    const cx = fox.x + fox.w / 2;
+    const bottom = fox.y + fox.h;
+    this.push({ kind: 'stomp', id: fox.id, x: cx, y: bottom });
+    for (const p of this.players.values()) {
+      if (!p.alive || !p.onGround) continue;
+      if (Math.abs(p.x + p.w / 2 - cx) < BOSS.stompRadius && Math.abs(p.y + p.h - bottom) < 40) this.damagePlayer(p, BOSS.stompDamage, cx);
+    }
+  }
+
+  spawnBoss() {
+    const boss = this.spawnFox('mother');
+    if (!boss) return null;
+    this.bossId = boss.id;
+    this.bossPhase = 1;
+    this.howlTimer = BOSS.howlEvery;
+    this.push({ kind: 'boss', id: boss.id, phase: 1, x: boss.x + boss.w / 2, y: boss.y, hp: boss.maxHp });
+    return boss;
+  }
+
+  updateBoss(dt) {
+    const boss = this.foxes.get(this.bossId);
+    if (!boss) return;
+    if (this.bossPhase === 1 && boss.hp <= boss.maxHp / 2) {
+      this.bossPhase = 2;
+      this.howlTimer = 1;
+      this.push({ kind: 'bossphase', id: boss.id, phase: 2, x: boss.x + boss.w / 2, y: boss.y });
+    }
+    if (this.bossPhase === 2) {
+      this.howlTimer -= dt;
+      if (this.howlTimer <= 0) {
+        this.howlTimer = BOSS.howlEvery;
+        let n = 0;
+        for (let i = 0; i < BOSS.howlCount; i++) if (this.spawnFox(weightedPick(FOX_KINDS, (k, v) => v.minWave <= this.wave && v.weight > 0))) n++;
+        this.push({ kind: 'howl', id: boss.id, x: boss.x + boss.w / 2, y: boss.y, count: n });
+      }
+    }
+  }
+
   dropPickup(x, y) {
     const id = this.nextId++;
-    const kind = weightedPick(PICKUPS);
+    const wave = this.wave;
+    const kind = weightedPick(PICKUPS, (k, v) => (v.minWave || 1) <= wave);
     const gy = groundBelow(this.world.platforms, x - PICKUP.w / 2, PICKUP.w, y);
     // A cursed crate wears the face of an ordinary one.
-    const look = kind === 'curse' ? PICKUP_LOOKS[Math.floor(Math.random() * PICKUP_LOOKS.length)] : kind;
+    const looks = PICKUP_LOOKS.filter((k) => (PICKUPS[k].minWave || 1) <= wave);
+    const look = kind === 'curse' ? looks[Math.floor(Math.random() * looks.length)] : kind;
     this.pickups.set(id, { id, kind, look, x: clamp(x - PICKUP.w / 2, 0, WORLD.width - PICKUP.w), y: gy - PICKUP.h, w: PICKUP.w, h: PICKUP.h, life: PICKUP.life });
   }
 
@@ -859,6 +956,12 @@ class Game {
       }
       this.push({ kind: 'kill', id: fox.id, x: fox.x + fox.w / 2, y: fox.y + fox.h / 2, by: shooter ? shooter.id : 0, mega: fox.mega, foxKind: fox.kind, score, source });
       if (Math.random() < (fox.mega ? PICKUP.megaDropChance : PICKUP.dropChance)) this.dropPickup(fox.x + fox.w / 2, fox.y + fox.h);
+      if (fox.boss && fox.id === this.bossId) {
+        this.bossId = 0;
+        this.bossPhase = 0;
+        this.foxes.clear();
+        this.endRound(true);
+      }
     } else {
       this.push({ kind: 'hit', id: fox.id, x: fox.x + fox.w / 2, y: fox.y + fox.h / 2 });
     }
@@ -885,6 +988,7 @@ class Game {
       d.collapsed = true;
       d.timer = DEN.collapseTime;
       this.push({ kind: 'dencollapse', id: d.id, x: d.x + d.w / 2, y: d.y + d.h });
+      if (this.dens.every((x) => x.collapsed)) this.teamStats.bothDens = true;
     }
   }
 
@@ -1063,7 +1167,7 @@ class Game {
       }
       if (tr.arm > 0) continue;
       for (const fox of this.foxes.values()) {
-        if (fox.dug || fox.trapped > 0) continue;
+        if (fox.dug || fox.trapped > 0 || fox.boss) continue;
         if (overlaps(tr, fox)) {
           fox.trapped = TRAP.hold;
           fox.vx = 0;
@@ -1092,7 +1196,32 @@ class Game {
   updatePickups(dt) {
     for (const pk of this.pickups.values()) {
       pk.life -= dt;
-      if (pk.life <= 0) this.pickups.delete(pk.id);
+      if (pk.life <= 0) {
+        this.pickups.delete(pk.id);
+        continue;
+      }
+      if (pk.noPick) {
+        pk.noPick.t -= dt;
+        if (pk.noPick.t <= 0) pk.noPick = null;
+      }
+      if (pk.air) {
+        // A thrown crate flies in an arc and lands on the first surface below
+        pk.vy += THROW.gravity * dt;
+        pk.x += pk.vx * dt;
+        pk.y += pk.vy * dt;
+        if (pk.x <= 0 || pk.x + pk.w >= WORLD.width) {
+          pk.x = clamp(pk.x, 0, WORLD.width - pk.w);
+          pk.vx = -pk.vx * 0.5;
+        }
+        const gy = groundBelow(this.world.platforms, pk.x, pk.w, pk.y + pk.h - pk.vy * dt);
+        if (pk.vy > 0 && pk.y + pk.h >= gy) {
+          pk.y = gy - pk.h;
+          pk.vx = 0;
+          pk.vy = 0;
+          pk.air = false;
+          this.push({ kind: 'land', item: pk.kind, x: pk.x + pk.w / 2, y: gy });
+        }
+      }
     }
     this.pickupTimer -= dt;
     if (this.pickupTimer <= 0) {
@@ -1138,7 +1267,7 @@ class Game {
 
   strikeLightning() {
     // Lightning prefers a fox; otherwise it just lights up a random spot in the forest.
-    const targets = [...this.foxes.values()].filter((f) => !f.dug && !f.mega);
+    const targets = [...this.foxes.values()].filter((f) => !f.dug && !f.mega && !f.boss);
     if (targets.length && Math.random() < 0.7) {
       const fox = targets[Math.floor(Math.random() * targets.length)];
       this.push({ kind: 'lightning', x: fox.x + fox.w / 2, y: fox.y + fox.h, hit: fox.id });
@@ -1189,8 +1318,10 @@ class Game {
       if (this.breather <= 0) {
         this.breather = 0;
         this.announcedWave = wave;
-        this.push({ kind: 'wave', wave, maxFoxes: this.maxFoxes });
-        if (wave % MEGA_EVERY === 0) {
+        const unlocked = Object.keys(PICKUPS).filter((k) => PICKUPS[k].minWave === wave && k !== 'curse');
+        this.push({ kind: 'wave', wave, maxFoxes: this.maxFoxes, unlocked });
+        if (wave === BOSS.wave) this.spawnBoss();
+        else if (wave % MEGA_EVERY === 0) {
           const count = Math.ceil(wave / (MEGA_EVERY * 2));
           for (let i = 0; i < count; i++) this.spawnFox('mega');
           this.push({ kind: 'mega', count, wave });
@@ -1198,6 +1329,10 @@ class Game {
         this.spawnTimer = 1;
       }
       return;
+    }
+    if (this.bossId) {
+      this.updateBoss(dt);
+      if (this.bossPhase === 1) return; // she fights alone first
     }
     this.spawnTimer -= dt;
     if (this.spawnTimer <= 0 && this.foxes.size < this.maxFoxes) {
@@ -1214,7 +1349,8 @@ class Game {
       wave: this.wave,
       kills: this.totalKills,
       maxFoxes: this.maxFoxes,
-      round: { number: this.round.number, over: this.round.over, restartIn: Math.max(0, Math.ceil(this.round.restartTimer)) },
+      round: { number: this.round.number, over: this.round.over, won: this.round.won, restartIn: Math.max(0, Math.ceil(this.round.restartTimer)) },
+      boss: this.bossId ? { id: this.bossId, phase: this.bossPhase } : null,
       breather: Math.max(0, Math.ceil(this.breather)),
       weather: { kind: this.weather.kind, t: Math.ceil(this.weather.t) },
       dens: this.dens.map((d) => ({ id: d.id, collapsed: d.collapsed, dmg: Math.round((d.damage / DEN.hp) * 100) / 100, t: Math.ceil(d.timer) })),
@@ -1228,7 +1364,7 @@ class Game {
       dropT: Math.round((p.dropT || 0) * 100) / 100, dropY: p.dropY || 0, downHeld: !!p.downHeld,
         seq: p.seq,
         weapon: p.weapon, weaponT: Math.ceil(p.weaponTimer), speedT: Math.ceil(p.speedTimer), stinkT: Math.ceil(p.stinkTimer),
-      incT: Math.ceil(p.incTimer), doubleT: Math.ceil(p.doubleTimer), disguiseT: Math.ceil(p.disguiseTimer), item: p.item,
+      incT: Math.ceil(p.incTimer), doubleT: Math.ceil(p.doubleTimer), disguiseT: Math.ceil(p.disguiseTimer), item: p.item, fragile: p.fragile,
         revive: p.alive ? 0 : Math.round((p.reviveProgress / PLAYER.reviveTime) * 100) / 100,
         reviving: p.reviving,
         survived: Math.round(p.alive ? this.time - p.spawnedAt : p.lastSurvival || 0),
@@ -1236,12 +1372,12 @@ class Game {
         totalKills: p.totalKills, totalRevives: p.totalRevives, totalTeamKills: p.totalTeamKills,
       })),
       foxes: [...this.foxes.values()].map((f) => ({
-        id: f.id, kind: f.kind, mega: f.mega, w: f.w, h: f.h, dug: f.dug || false, stun: f.stun > 0,
+        id: f.id, kind: f.kind, mega: f.mega, boss: f.boss || false, w: f.w, h: f.h, dug: f.dug || false, stun: f.stun > 0,
         x: Math.round(f.x * 10) / 10, y: Math.round(f.y * 10) / 10, vx: Math.round(f.vx),
         hp: f.hp, maxHp: f.maxHp, facing: f.facing, onGround: f.onGround, roam: !!f.roam, flee: !!f.fleeing, trapped: f.trapped > 0,
       })),
       bullets: [...this.bullets.values()].map((b) => ({ id: b.id, x: Math.round(b.x), y: Math.round(b.y), dir: Math.sign(b.vx), fire: b.fire || false })),
-      pickups: [...this.pickups.values()].map((pk) => ({ id: pk.id, kind: pk.look || pk.kind, x: pk.x, y: pk.y, life: Math.round(pk.life) })),
+      pickups: [...this.pickups.values()].map((pk) => ({ id: pk.id, kind: pk.look || pk.kind, x: Math.round(pk.x), y: Math.round(pk.y), life: Math.round(pk.life), air: !!pk.air })),
       fires: [...this.fires.values()].map((f) => ({ id: f.id, x: Math.round(f.x), y: Math.round(f.y), k: Math.round((f.life / f.maxLife) * 100) / 100 })),
       traps: [...this.traps.values()].map((t) => ({ id: t.id, x: t.x, y: t.y, armed: t.arm <= 0 })),
       lures: [...this.lures.values()].map((l) => ({ id: l.id, kind: l.kind, x: l.x, y: l.y, life: Math.ceil(l.life) })),
@@ -1252,4 +1388,4 @@ class Game {
   }
 }
 
-module.exports = { Game, PLAYER, FOX_KINDS, WEAPONS, PICKUPS, FIRE, DEN, WEATHER, BULLET, ROUND_RESTART, TRAP, LURES, HORN, SEED, TREE_BURN };
+module.exports = { Game, PLAYER, FOX_KINDS, WEAPONS, PICKUPS, FIRE, DEN, WEATHER, BULLET, ROUND_RESTART, TRAP, LURES, HORN, SEED, TREE_BURN, BOSS, THROW };

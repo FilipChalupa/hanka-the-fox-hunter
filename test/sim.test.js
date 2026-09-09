@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { Game, PLAYER, DEN, FIRE, TRAP, HORN, SEED: SEED_CFG, TREE_BURN } = require('../game/sim.js');
+const { Game, PLAYER, DEN, FIRE, TRAP, HORN, SEED: SEED_CFG, TREE_BURN, BOSS } = require('../game/sim.js');
 const Shared = require('../public/shared.js');
 const { WORLD, encodeDelta, applyDelta } = Shared;
 
@@ -579,4 +579,113 @@ test('clearing a wave gives a 5 s breather without spawns before the next wave s
   events = run(game, 3);
   assert.ok(events.some((e) => e.kind === 'wave' && e.wave === 2), 'next wave announced');
   assert.ok(events.some((e) => e.kind === 'foxspawn'), 'spawning resumed');
+});
+
+test('the Fox Mother arrives at the boss wave, howls the pack in phase 2 and her death wins the round', () => {
+  const game = mk();
+  const a = game.addPlayer({ name: 'A' });
+  place(a, 1500);
+  game.totalKills = (BOSS.wave - 1) * 12;
+  game.announcedWave = BOSS.wave - 1;
+  game.roundStartedAt = -100;
+  game.weatherTimer = 1e9;
+  let events = run(game, 6);
+  const bossEv = events.find((e) => e.kind === 'boss');
+  assert.ok(bossEv, 'boss announced');
+  const boss = game.foxes.get(bossEv.id);
+  assert.ok(boss && boss.boss && boss.kind === 'mother');
+  game.spawnTimer = 0;
+  events = run(game, 3);
+  assert.equal(events.filter((e) => e.kind === 'foxspawn' && e.foxKind !== 'mother').length, 0, 'phase 1: she fights alone');
+  boss.hp = boss.maxHp / 2 - 1;
+  events = run(game, 2);
+  assert.ok(events.some((e) => e.kind === 'bossphase' && e.phase === 2), 'phase 2');
+  assert.ok(events.some((e) => e.kind === 'howl'), 'she howls');
+  assert.ok(game.foxes.size > 1, 'the pack came out');
+  let summary = null;
+  game.onGameOver = (s) => (summary = s);
+  a.roundRevives = 3;
+  game.damageFox(boss, 99999, a);
+  assert.equal(game.round.over, true);
+  assert.equal(game.round.won, true);
+  assert.ok(summary && summary.won);
+  assert.ok(summary.teamBadges.includes('Liščí matka poražena'));
+  assert.ok(summary.teamBadges.includes('Tři oživení v jednom kole'));
+  assert.equal(game.foxes.size, 0, 'the forest goes quiet');
+  assert.ok(a.score >= 300);
+});
+
+test('pickup kinds unlock with the wave', () => {
+  const game = mk();
+  game.addPlayer({ name: 'A' });
+  for (let i = 0; i < 200; i++) game.dropPickup(1000 + i, 600);
+  const early = new Set([...game.pickups.values()].map((p) => p.kind));
+  assert.ok(early.has('medkit') || early.has('shotgun'));
+  assert.ok(!early.has('seed') && !early.has('disguise') && !early.has('lantern'), 'late kinds locked at wave 1');
+  game.pickups.clear();
+  game.totalKills = 12 * 6;
+  for (let i = 0; i < 400; i++) game.dropPickup(1000 + i, 600);
+  const late = new Set([...game.pickups.values()].map((p) => p.kind));
+  assert.ok(late.has('seed') || late.has('disguise') || late.has('lantern'), 'late kinds available now');
+});
+
+test('a held item can be thrown to a teammate', () => {
+  const game = mk();
+  const a = game.addPlayer({ name: 'A' });
+  const b = game.addPlayer({ name: 'B' });
+  place(a, 1000);
+  place(b, 1250);
+  give(game, a, 'trap');
+  assert.equal(a.item, 'trap');
+  game.setInput(a.id, input({ throw: 1 }));
+  let events = run(game, 0.1);
+  assert.ok(events.some((e) => e.kind === 'throw' && e.item === 'trap'));
+  assert.equal(a.item, null);
+  assert.equal(game.pickups.size, 1, 'the crate is in the air');
+  events = run(game, 2);
+  assert.ok(b.item === 'trap' || events.some((e) => e.kind === 'land'), 'B caught it or it landed');
+  assert.equal(a.item, null, 'the thrower did not take it straight back');
+});
+
+test('a revived hunter is fragile: 3 s invulnerable and marked until healed', () => {
+  const game = mk();
+  const a = game.addPlayer({ name: 'A' });
+  const b = game.addPlayer({ name: 'B' });
+  place(a, 1500);
+  place(b, 1500);
+  game.damagePlayer(a, 999, 1400);
+  game.setInput(b.id, input({ revive: true }));
+  run(game, 3.3);
+  assert.equal(a.alive, true);
+  assert.equal(a.fragile, true);
+  assert.ok(a.invulnTimer > 2.5, `3 s of grace: ${a.invulnTimer}`);
+  give(game, a, 'medkit');
+  assert.equal(a.fragile, false);
+});
+
+test('team badges: no death before wave 5 and both dens collapsed', () => {
+  const game = mk();
+  const a = game.addPlayer({ name: 'A' });
+  game.totalKills = 12 * 5;
+  game.dens[0].collapsed = true;
+  game.hitDen(game.dens[1], 999);
+  assert.equal(game.teamStats.bothDens, true);
+  game.damagePlayer(a, 999, 0);
+  const badges = game.teamBadges(false);
+  assert.ok(badges.includes('Nikdo neumřel do vlny 5'));
+  assert.ok(badges.includes('Zavaleny obě nory najednou'));
+});
+
+test('a sideways press lets go of the trunk', () => {
+  const game = mk();
+  const a = game.addPlayer({ name: 'A' });
+  const trunk = game.world.trunks[0];
+  place(a, trunk.x - PLAYER.w / 2);
+  game.setInput(a.id, input({ jump: true }));
+  run(game, 1.5);
+  assert.equal(a.climbing, true);
+  game.setInput(a.id, input({ right: true }));
+  run(game, 0.1);
+  assert.equal(a.climbing, false, 'let go');
+  assert.ok(a.vx > 0 || a.x > trunk.x - PLAYER.w / 2 + 3, 'stepped off to the side');
 });

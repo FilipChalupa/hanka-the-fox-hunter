@@ -7,7 +7,7 @@ const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
 const { Game } = require('./game/sim.js');
 const { Leaderboard } = require('./game/leaderboard.js');
-const { encodeDelta } = require('./public/shared.js');
+const { encodeDelta, PROTOCOL } = require('./public/shared.js');
 
 const PORT = Number(process.env.PORT) || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
@@ -31,7 +31,22 @@ const MIME = {
 // Game + leaderboard
 // ---------------------------------------------------------------------------
 const leaderboard = new Leaderboard(path.join(DATA_DIR, 'leaderboard.json'));
-const game = new Game({ onGameOver: (summary) => leaderboard.recordRound(summary) });
+const startedAt = Date.now();
+// Rolling metrics for /metrics
+const metrics = { tickMs: [], fullBytes: [], deltaBytes: [], snapshots: 0, roundsFinished: 0, roundsWon: 0 };
+const pushMetric = (arr, v, cap = 600) => {
+  arr.push(v);
+  if (arr.length > cap) arr.shift();
+};
+const avg = (arr) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0);
+const maxOf = (arr) => (arr.length ? Math.max(...arr) : 0);
+const game = new Game({
+  onGameOver: (summary) => {
+    metrics.roundsFinished++;
+    if (summary.won) metrics.roundsWon++;
+    leaderboard.recordRound(summary);
+  },
+});
 
 // ---------------------------------------------------------------------------
 // HTTP: static files + tiny JSON API
@@ -45,7 +60,24 @@ const server = http.createServer((req, res) => {
   }
   if (urlPath === '/api/status') {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-    return res.end(JSON.stringify({ online: game.connectedCount(), wave: game.wave, round: game.round.number }));
+    return res.end(JSON.stringify({ online: game.connectedCount(), wave: game.wave, round: game.round.number, foxes: game.foxes.size, boss: game.bossPhase, uptime: Math.round((Date.now() - startedAt) / 1000), protocol: PROTOCOL }));
+  }
+  if (urlPath === '/metrics') {
+    const lines = [
+      '# HELP foxhunter_players_online Connected hunters', '# TYPE foxhunter_players_online gauge', `foxhunter_players_online ${game.connectedCount()}`,
+      '# HELP foxhunter_players_total Hunters including disconnected bodies', '# TYPE foxhunter_players_total gauge', `foxhunter_players_total ${game.players.size}`,
+      '# HELP foxhunter_foxes Foxes alive', '# TYPE foxhunter_foxes gauge', `foxhunter_foxes ${game.foxes.size}`,
+      '# HELP foxhunter_wave Current wave', '# TYPE foxhunter_wave gauge', `foxhunter_wave ${game.wave}`,
+      '# HELP foxhunter_round Current round number', '# TYPE foxhunter_round gauge', `foxhunter_round ${game.round.number}`,
+      '# HELP foxhunter_tick_ms Simulation tick duration in ms (rolling)', '# TYPE foxhunter_tick_ms gauge', `foxhunter_tick_ms{stat="avg"} ${avg(metrics.tickMs).toFixed(3)}`, `foxhunter_tick_ms{stat="max"} ${maxOf(metrics.tickMs).toFixed(3)}`,
+      '# HELP foxhunter_snapshot_bytes Snapshot size in bytes (rolling)', '# TYPE foxhunter_snapshot_bytes gauge', `foxhunter_snapshot_bytes{kind="full"} ${Math.round(avg(metrics.fullBytes))}`, `foxhunter_snapshot_bytes{kind="delta"} ${Math.round(avg(metrics.deltaBytes))}`,
+      '# HELP foxhunter_snapshots_total Snapshots broadcast', '# TYPE foxhunter_snapshots_total counter', `foxhunter_snapshots_total ${metrics.snapshots}`,
+      '# HELP foxhunter_rounds_total Rounds finished', '# TYPE foxhunter_rounds_total counter', `foxhunter_rounds_total{result="lost"} ${metrics.roundsFinished - metrics.roundsWon}`, `foxhunter_rounds_total{result="won"} ${metrics.roundsWon}`,
+      '# HELP foxhunter_uptime_seconds Seconds since start', '# TYPE foxhunter_uptime_seconds counter', `foxhunter_uptime_seconds ${Math.round((Date.now() - startedAt) / 1000)}`,
+      '# HELP foxhunter_protocol Protocol version', '# TYPE foxhunter_protocol gauge', `foxhunter_protocol ${PROTOCOL}`,
+    ];
+    res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8', 'Cache-Control': 'no-store' });
+    return res.end(lines.join('\n') + '\n');
   }
   if (urlPath === '/healthz') {
     res.writeHead(200);
@@ -66,7 +98,8 @@ const server = http.createServer((req, res) => {
     const ext = path.extname(filePath);
     res.writeHead(200, {
       'Content-Type': MIME[ext] || 'application/octet-stream',
-      'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=300',
+      // Scripts and the page must revalidate so a new protocol reaches every browser quickly.
+      'Cache-Control': ext === '.html' || ext === '.js' || ext === '.webmanifest' ? 'no-cache' : 'public, max-age=86400',
     });
     res.end(data);
   });
@@ -119,7 +152,7 @@ wss.on('connection', (ws) => {
       }
       if (!player) player = game.addPlayer({ name: sanitizeName(msg.name), outfit: msg.outfit, token: token || crypto.randomUUID() });
       sockets.set(player.id, ws);
-      sendJson(ws, { t: 'welcome', id: player.id, token: player.token, world: game.world, rejoined, name: player.name });
+      sendJson(ws, { t: 'welcome', proto: PROTOCOL, id: player.id, token: player.token, world: game.world, rejoined, name: player.name });
       console.log(`+ ${player.name} (#${player.id}) ${rejoined ? 'is back' : 'joined'}, ${game.connectedCount()} online`);
       return;
     }
@@ -148,7 +181,9 @@ setInterval(() => {
   const now = Date.now();
   const dt = Math.min((now - lastTick) / 1000, 0.05);
   lastTick = now;
+  const t0 = process.hrtime.bigint();
   game.tick(dt);
+  pushMetric(metrics.tickMs, Number(process.hrtime.bigint() - t0) / 1e6);
 }, 1000 / TICK_RATE);
 
 let lastSent = null;
@@ -166,6 +201,9 @@ setInterval(() => {
   if (keyframe) keyframeTimer = 0;
   const full = JSON.stringify(snap);
   const delta = keyframe ? full : JSON.stringify(encodeDelta(lastSent, snap));
+  metrics.snapshots++;
+  if (keyframe) pushMetric(metrics.fullBytes, full.length, 60);
+  else pushMetric(metrics.deltaBytes, delta.length);
   for (const ws of wss.clients) {
     if (ws.readyState !== ws.OPEN) continue;
     if (keyframe || ws.needsFull) {

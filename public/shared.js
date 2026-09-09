@@ -9,6 +9,7 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
+  const PROTOCOL = 3; // bump whenever snapshot/message shapes change; mismatched clients reload
   const WORLD = { width: 3200, height: 720, groundY: 660 };
   const GRAVITY = 1900;
   const MAX_FALL = 1300;
@@ -184,14 +185,14 @@
         p.vy = v * PLAYER.climbSpeed;
         p.y += p.vy * dt;
         p.onGround = false;
-        if (inp.jump && !p.jumpHeld && dir !== 0) {
-          // Jump off sideways
+        if (dir !== 0) {
+          // Sideways lets go of the trunk: a hop off with jump held, otherwise just step off
           p.climbing = false;
-          p.vy = -PLAYER.jump * 0.75;
+          p.vy = inp.jump && !p.jumpHeld ? -PLAYER.jump * 0.75 : 0;
           p.vx = dir * speed;
           p.facing = dir;
           p.x += dir * 6;
-          out.push('jump');
+          out.push(inp.jump && !p.jumpHeld ? 'jump' : 'letgo');
         } else if (p.y + p.h <= trunk.top + 2) {
           // Reached the canopy: step onto it
           p.climbing = false;
@@ -332,5 +333,5 @@
     return next;
   }
 
-  return { WORLD, GRAVITY, PLAYER, clamp, overlaps, seeded, generateWorld, stepPhysics, groundBelow, trunkAt, platformUnder, movePlayer, moveGhost, encodeDelta, applyDelta, COLLECTIONS };
+  return { PROTOCOL, WORLD, GRAVITY, PLAYER, clamp, overlaps, seeded, generateWorld, stepPhysics, groundBelow, trunkAt, platformUnder, movePlayer, moveGhost, encodeDelta, applyDelta, COLLECTIONS };
 });
