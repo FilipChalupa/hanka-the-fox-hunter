@@ -43,6 +43,7 @@ a hrajete spolu.
 | Propad  | `S`/`↓` na plošině propadne skrz ni dolů |
 | Použít  | `Q` (past, roh, semínko, světluška, vnadidlo) |
 | Emoty   | `1` 👍, `2` 🆘, `3` 😂, `4` ❤️            |
+| Hudba   | `M` zapne/vypne (pamatuje se)             |
 | Duch    | `W`/`↑` nahoru, `S`/`↓` dolů             |
 
 Na dotykových zařízeních je vlevo virtuální joystick (pohyb, skok tahem
@@ -121,6 +122,9 @@ nahoře řada emotů.
 - HUD z dřevěných cedulí (fonty Cinzel a Nunito), srdíčka místo HP pruhu,
   „+10“ letící do žebříčku, oznámení nové vlny, obrazovka smrti se statistikami.
 - Ambientní zvuk: vítr, cvrčci a houkání sovy generované přes WebAudio.
+- Podkresová hudba generovaná za běhu (A moll, pad + basa + pentatonická
+  melodie s echem). Tempo, jas a hustota melodie rostou s vlnou a s počtem
+  lišek poblíž, v klidu mezi vlnami a po smrti hudba zjemní.
 
 ## Struktura
 

@@ -164,6 +164,7 @@ function ensureAudio() {
   if (audioCtx && !ambientStarted) {
     ambientStarted = true;
     startAmbient();
+    startMusic();
   }
 }
 
@@ -265,6 +266,136 @@ function setRainSound(on) {
     g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 1.5);
     setTimeout(() => src.stop(), 1600);
   }
+}
+
+// ===========================================================================
+// Music: a generative night-forest loop. Nothing is loaded; every note is an oscillator.
+// Intensity follows the wave and how many foxes are close, so the music tenses up with the fight.
+// ===========================================================================
+const music = {
+  enabled: true,
+  started: false,
+  master: null,
+  padFilter: null,
+  step: 0,
+  nextTime: 0,
+  intensity: 0.2,
+  target: 0.2,
+  bpm: 72,
+  chordIdx: 0,
+  melodyNote: 3,
+  timer: null,
+};
+// A minor: Am, F, C, G (root, third, fifth as semitone offsets from A2 = 110 Hz)
+const CHORDS = [
+  [0, 3, 7],
+  [8, 12, 15],
+  [3, 7, 10],
+  [10, 14, 17],
+];
+const PENTA = [0, 3, 5, 7, 10, 12, 15, 17, 19, 22]; // A minor pentatonic across two octaves
+const hz = (semi, base = 110) => base * Math.pow(2, semi / 12);
+
+function musicNote({ type, freq, t, dur, gain, dest, attack = 0.01, detune = 0 }) {
+  const osc = audioCtx.createOscillator();
+  osc.type = type;
+  osc.frequency.value = freq;
+  osc.detune.value = detune;
+  const g = audioCtx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(gain, t + attack);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  osc.connect(g).connect(dest);
+  osc.start(t);
+  osc.stop(t + dur + 0.05);
+}
+
+function startMusic() {
+  if (!audioCtx || music.started) return;
+  music.started = true;
+  music.master = audioCtx.createGain();
+  music.master.gain.value = music.enabled ? 0.0001 : 0;
+  music.master.connect(audioCtx.destination);
+  if (music.enabled) music.master.gain.exponentialRampToValueAtTime(1, audioCtx.currentTime + 3);
+  music.padFilter = audioCtx.createBiquadFilter();
+  music.padFilter.type = 'lowpass';
+  music.padFilter.frequency.value = 500;
+  music.padFilter.connect(music.master);
+  // A little echo for the melody
+  music.delay = audioCtx.createDelay(1);
+  music.delay.delayTime.value = 0.42;
+  const fb = audioCtx.createGain();
+  fb.gain.value = 0.3;
+  music.delay.connect(fb).connect(music.delay);
+  const wet = audioCtx.createGain();
+  wet.gain.value = 0.35;
+  music.delay.connect(wet).connect(music.master);
+  music.nextTime = audioCtx.currentTime + 0.1;
+  music.timer = setInterval(scheduleMusic, 40);
+}
+
+function setMusic(on) {
+  music.enabled = on;
+  try {
+    localStorage.setItem('hanka-music', on ? '1' : '0');
+  } catch {}
+  if (!music.master) return;
+  const t = audioCtx.currentTime;
+  music.master.gain.cancelScheduledValues(t);
+  music.master.gain.setValueAtTime(Math.max(0.0001, music.master.gain.value), t);
+  music.master.gain.exponentialRampToValueAtTime(on ? 1 : 0.0001, t + 1);
+}
+
+function scheduleMusic() {
+  if (!audioCtx || !music.enabled) return;
+  // Ease intensity towards the target and derive tempo/brightness from it
+  music.intensity += (music.target - music.intensity) * 0.05;
+  const I = music.intensity;
+  music.bpm = 68 + I * 30;
+  music.padFilter.frequency.value = 400 + I * 900;
+  const stepDur = 60 / music.bpm / 2; // eighth notes
+  while (music.nextTime < audioCtx.currentTime + 0.25) {
+    const t = music.nextTime;
+    const step = music.step;
+    const bar = Math.floor(step / 8);
+    const inBar = step % 8;
+    const chord = CHORDS[bar % CHORDS.length];
+    // Pad: one long swell per bar
+    if (inBar === 0) {
+      for (const semi of chord) {
+        musicNote({ type: 'triangle', freq: hz(semi, 110), t, dur: stepDur * 8.2, gain: 0.05, dest: music.padFilter, attack: 0.8, detune: -6 });
+        musicNote({ type: 'sawtooth', freq: hz(semi, 110), t, dur: stepDur * 8.2, gain: 0.018, dest: music.padFilter, attack: 1.2, detune: 7 });
+      }
+    }
+    // Bass on beats 1 and 3, an extra pickup when it gets tense
+    if (inBar === 0 || inBar === 4 || (I > 0.55 && inBar === 6)) {
+      musicNote({ type: 'triangle', freq: hz(chord[0], 55), t, dur: stepDur * 1.6, gain: 0.11, dest: music.master, attack: 0.02 });
+    }
+    // Soft wooden tick on the off-beats once the fight is on
+    if (I > 0.45 && (inBar === 2 || inBar === 6)) {
+      musicNote({ type: 'square', freq: 1400 + Math.random() * 300, t, dur: 0.04, gain: 0.02 * I, dest: music.master, attack: 0.002 });
+    }
+    // Sparse melody: random walk on the pentatonic, more notes when tense, none in the calm
+    const chance = 0.12 + I * 0.4;
+    if (Math.random() < chance && inBar % 2 === (bar % 2)) {
+      music.melodyNote = clamp(music.melodyNote + Math.round((Math.random() - 0.5) * 3), 0, PENTA.length - 1);
+      const freq = hz(PENTA[music.melodyNote], 220);
+      musicNote({ type: 'sine', freq, t, dur: stepDur * (Math.random() < 0.3 ? 3 : 1.5), gain: 0.06, dest: music.master, attack: 0.01 });
+      musicNote({ type: 'sine', freq, t, dur: stepDur * 1.5, gain: 0.03, dest: music.delay, attack: 0.01 });
+    }
+    music.nextTime += stepDur;
+    music.step++;
+  }
+}
+
+function updateMusicIntensity(snap, me, foxesR) {
+  if (!snap) return;
+  let near = 0;
+  if (me && me.alive) for (const f of foxesR) if (!f.dug && Math.abs(f.rx - me.rx) < 420 && Math.abs(f.ry - me.ry) < 220) near++;
+  let target = 0.15 + Math.min(0.35, (snap.wave - 1) * 0.06) + Math.min(0.45, near * 0.12);
+  if (snap.breather > 0 || gameOver) target = 0.1;
+  if (me && !me.alive) target *= 0.6;
+  music.target = clamp(target, 0.08, 1);
 }
 
 const SFX = {
@@ -386,6 +517,10 @@ function requestDash(dir) {
 window.addEventListener('keydown', (e) => {
   if (document.activeElement === nameInput) return;
   if (EMOTE_KEYS[e.code] && !e.repeat) send({ t: 'emote', n: EMOTE_KEYS[e.code] });
+  if (e.code === 'KeyM' && !e.repeat) {
+    setMusic(!music.enabled);
+    addFeed(music.enabled ? '🎵 Hudba zapnuta' : '🔇 Hudba vypnuta (M)', '#c9b3ff');
+  }
   const action = KEYMAP[e.code];
   if (!action) return;
   e.preventDefault();
@@ -720,6 +855,7 @@ nameInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') playBtn.click();
 });
 try {
+  music.enabled = localStorage.getItem('hanka-music') !== '0';
   nameInput.value = localStorage.getItem('hanka-name') || '';
   myToken = localStorage.getItem('hanka-token') || null;
   const o = parseInt(localStorage.getItem('hanka-outfit'), 10);
@@ -2697,7 +2833,7 @@ function drawHUD(g, me, snap, dt) {
   g.textAlign = 'right';
   g.fillStyle = 'rgba(255,255,255,0.55)';
   g.font = `600 10px ${FONT_BODY}`;
-  tabText(g, `${latency} ms`, VIEW.w - 14, VIEW.h - 10, 'right');
+  tabText(g, `${music.enabled ? '♪' : '♪̸'} M · ${latency} ms`, VIEW.w - 14, VIEW.h - 10, 'right');
 }
 
 // Where is the ghost I should revive (or, as a ghost, the nearest living hunter)?
@@ -3050,6 +3186,7 @@ function frame(realNow) {
   }
   updateRain(dt, weather);
   updateBodySounds(me, dt);
+  updateMusicIntensity(snap, me, foxesR);
   denyT = Math.max(0, denyT - dt);
 
   // A digger tunnelling close by: the ground trembles and the soil cracks open behind it
