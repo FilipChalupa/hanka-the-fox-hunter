@@ -1750,24 +1750,41 @@ function drawDen(g, d, state, time) {
     g.fillStyle = '#ffcc44';
     g.fillRect(cx - 9, bottom - 18, 5, 3 * blink);
     g.fillRect(cx + 4, bottom - 18, 5, 3 * blink);
-    if (state && state.dmg > 0) {
-      g.fillStyle = 'rgba(0,0,0,0.5)';
-      g.fillRect(cx - 24, y - 12, 48, 5);
-      g.fillStyle = '#ffb347';
-      g.fillRect(cx - 24, y - 12, 48 * state.dmg, 5);
-      g.strokeStyle = 'rgba(30,15,5,0.7)';
+    // Strength of the den: always visible, shrinks under fire, slowly grows back
+    const dmg = state ? state.dmg : 0;
+    const left = 1 - dmg;
+    g.fillStyle = 'rgba(0,0,0,0.55)';
+    roundRect(g, cx - 26, y - 14, 52, 7, 2);
+    g.fill();
+    g.fillStyle = dmg > 0.66 ? '#e04b4b' : dmg > 0.33 ? '#e0b43a' : '#8fd18f';
+    g.fillRect(cx - 25, y - 13, 50 * left, 5);
+    if (dmg > 0.66 && Math.sin(time * 10) > 0) {
+      g.strokeStyle = '#ffd27f';
+      g.lineWidth = 1;
+      g.strokeRect(cx - 26.5, y - 14.5, 53, 8);
+    }
+    if (dmg > 0) {
+      // Cracks spread across the mound as it weakens
+      g.strokeStyle = 'rgba(30,15,5,0.75)';
       g.lineWidth = 1.5;
       g.beginPath();
       g.moveTo(cx - 20, bottom - 30);
-      g.lineTo(cx - 10 + state.dmg * 10, bottom - 18);
-      g.moveTo(cx + 18, bottom - 34);
-      g.lineTo(cx + 8, bottom - 20);
+      g.lineTo(cx - 10 + dmg * 10, bottom - 18);
+      if (dmg > 0.4) {
+        g.moveTo(cx + 18, bottom - 34);
+        g.lineTo(cx + 8, bottom - 20);
+      }
+      if (dmg > 0.7) {
+        g.moveTo(cx + 2, bottom - 40);
+        g.lineTo(cx - 4, bottom - 26);
+        g.lineTo(cx + 3, bottom - 14);
+      }
       g.stroke();
     }
     g.font = `800 9px ${FONT_BODY}`;
     g.textAlign = 'center';
-    g.fillStyle = 'rgba(255,200,140,0.75)';
-    g.fillText('NORA', cx, y - 6);
+    g.fillStyle = 'rgba(255,200,140,0.85)';
+    g.fillText(dmg > 0 ? `NORA ${Math.round(left * 100)} %` : 'NORA', cx, y - 18);
   }
 }
 
