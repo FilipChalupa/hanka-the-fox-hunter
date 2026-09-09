@@ -1217,7 +1217,7 @@ function drawDen(g, d, state, time) {
     g.font = `800 10px ${FONT_BODY}`;
     g.textAlign = 'center';
     g.fillStyle = '#c9e6b8';
-    g.fillText(`zavaleno ${state.t} s`, cx, y - 8);
+    tabText(g, `zavaleno ${state.t} s`, cx, y - 8, 'center');
   } else {
     g.fillStyle = '#120a04';
     g.beginPath();
@@ -1615,7 +1615,7 @@ function drawGhost(g, p, x, y, time, isMe) {
     g.stroke();
     g.font = `800 10px ${FONT_BODY}`;
     g.fillStyle = '#7fe0a8';
-    g.fillText(`${Math.ceil((1 - p.revive) * 3)} s`, cx, y + 58 + bob);
+    tabText(g, `${Math.ceil((1 - p.revive) * 3)} s`, cx, y + 58 + bob, 'center');
   }
 }
 
@@ -1936,6 +1936,31 @@ function roundRect(g, x, y, w, h, r) {
   g.closePath();
 }
 
+// Canvas has no font-variant-numeric, so digits are laid out by hand in fixed-width
+// slots: countdowns and scores stop jittering as the numbers change.
+const digitWidths = new Map();
+function tabText(g, text, x, y, align = 'left') {
+  const font = g.font;
+  let dw = digitWidths.get(font);
+  if (dw === undefined) {
+    dw = 0;
+    for (const d of '0123456789') dw = Math.max(dw, g.measureText(d).width);
+    digitWidths.set(font, dw);
+  }
+  const parts = [...String(text)];
+  const widths = parts.map((c) => (/\d/.test(c) ? dw : g.measureText(c).width));
+  const total = widths.reduce((a, b) => a + b, 0);
+  let cx = align === 'right' ? x - total : align === 'center' ? x - total / 2 : x;
+  const prevAlign = g.textAlign;
+  g.textAlign = 'left';
+  parts.forEach((c, i) => {
+    if (/\d/.test(c)) g.fillText(c, cx + (dw - g.measureText(c).width) / 2, y);
+    else g.fillText(c, cx, y);
+    cx += widths[i];
+  });
+  g.textAlign = prevAlign;
+}
+
 function drawPanel(g, x, y, w, h) {
   g.save();
   g.shadowColor = 'rgba(0,0,0,0.6)';
@@ -2049,16 +2074,16 @@ function drawHUD(g, me, snap, dt) {
   g.fillText('Hanka The Fox Hunter', 24, 34);
   g.font = `800 12px ${FONT_BODY}`;
   g.fillStyle = '#f3ecd8';
-  g.fillText(`Kolo ${snap.round.number} · Vlna ${snap.wave}`, 24, 54);
+  tabText(g, `Kolo ${snap.round.number} · Vlna ${snap.wave}`, 24, 54);
   g.fillStyle = '#ffb08a';
-  g.fillText(`🦊 ${snap.foxes.length}/${snap.maxFoxes}`, 138, 54);
+  tabText(g, `🦊 ${snap.foxes.length}/${snap.maxFoxes}`, 138, 54);
   g.fillStyle = '#c9e6b8';
-  g.fillText(`Ulov. ${snap.kills}`, 196, 54);
+  tabText(g, `Ulov. ${snap.kills}`, 196, 54);
   const hp = me ? me.hp : 0;
   for (let i = 0; i < 5; i++) drawHeart(g, 34 + i * 22, 74, 1.7, clamp((hp - i * 20) / 20, 0, 1));
   g.fillStyle = '#f3ecd8';
   g.font = `800 11px ${FONT_BODY}`;
-  g.fillText(`${hp}`, 150, 78);
+  tabText(g, `${hp}`, 150, 78);
   if (me && me.alive) {
     const items = [];
     if (me.weapon && me.weapon !== 'rifle') items.push({ info: PICKUP_INFO[me.weapon], t: me.weaponT });
@@ -2070,7 +2095,7 @@ function drawHUD(g, me, snap, dt) {
       g.fill();
       g.fillStyle = it.info.color;
       g.font = `900 13px ${FONT_BODY}`;
-      g.fillText(`${it.info.icon}${it.t}`, x + 5, 78);
+      tabText(g, `${it.info.icon}${it.t}`, x + 5, 78);
     });
     const cd = clamp(1 - pred.dashCd / S.PLAYER.dashCooldown, 0, 1);
     g.fillStyle = 'rgba(0,0,0,0.35)';
@@ -2088,7 +2113,7 @@ function drawHUD(g, me, snap, dt) {
     g.font = `800 12px ${FONT_BODY}`;
     g.fillStyle = '#cfe6ff';
     g.textAlign = 'left';
-    g.fillText(`${info.icon} ${info.label} ${snap.weather.t}s`, 284, 33);
+    tabText(g, `${info.icon} ${info.label} ${snap.weather.t}s`, 284, 33);
   }
 
   const sorted = [...snap.players].sort((a, b) => b.score - a.score).slice(0, 8);
@@ -2116,9 +2141,9 @@ function drawHUD(g, me, snap, dt) {
       g.save();
       g.translate(bx + 206, yy);
       g.scale(1 + scoreBump * 0.5, 1 + scoreBump * 0.5);
-      g.fillText(`${scoreShown}`, 0, 0);
+      tabText(g, `${scoreShown}`, 0, 0, 'right');
       g.restore();
-    } else g.fillText(`${p.score}`, bx + 206, yy);
+    } else tabText(g, `${p.score}`, bx + 206, yy, 'right');
   });
 
   g.textAlign = 'left';
@@ -2143,7 +2168,7 @@ function drawHUD(g, me, snap, dt) {
   g.textAlign = 'right';
   g.fillStyle = 'rgba(255,255,255,0.55)';
   g.font = `600 10px ${FONT_BODY}`;
-  g.fillText(`${latency} ms`, VIEW.w - 14, VIEW.h - 10);
+  tabText(g, `${latency} ms`, VIEW.w - 14, VIEW.h - 10, 'right');
 }
 
 function drawBanner(g, dt) {
@@ -2206,7 +2231,7 @@ function drawGameOver(g, snap, dt, time) {
   g.fillStyle = `rgba(30,0,0,${0.55 * k})`;
   g.fillRect(0, 0, VIEW.w, VIEW.h);
   const rows = gameOver.ranking.slice(0, 6);
-  const pw = 700;
+  const pw = 760;
   const rowH = 34;
   const ph = 150 + rows.length * rowH;
   const px = VIEW.w / 2 - pw / 2;
@@ -2226,7 +2251,7 @@ function drawGameOver(g, snap, dt, time) {
   g.fillStyle = '#f3ecd8';
   g.fillText(`Došli jste do vlny ${gameOver.wave} a ulovili ${gameOver.kills} lišek.`, VIEW.w / 2, py + 68);
 
-  const cols = { score: px + pw - 370, kills: px + pw - 310, survived: px + pw - 245, total: px + pw - 24 };
+  const cols = { score: px + pw - 430, kills: px + pw - 370, survived: px + pw - 300, total: px + pw - 24 };
   g.font = `900 12px ${FONT_TITLE}`;
   g.fillStyle = '#ffd27f';
   g.textAlign = 'left';
@@ -2253,18 +2278,22 @@ function drawGameOver(g, snap, dt, time) {
     g.font = `700 13px ${FONT_BODY}`;
     g.fillStyle = r.id === myId ? '#ffd27f' : '#f3ecd8';
     g.textAlign = 'right';
-    g.fillText(`${r.score}`, cols.score, yy);
-    g.fillText(`${r.kills}`, cols.kills, yy);
-    g.fillText(`${r.survived} s`, cols.survived, yy);
+    tabText(g, `${r.score}`, cols.score, yy, 'right');
+    tabText(g, `${r.kills}`, cols.kills, yy, 'right');
+    tabText(g, `${r.survived} s`, cols.survived, yy, 'right');
     g.fillStyle = '#c9e6b8';
     g.font = `700 12px ${FONT_BODY}`;
-    g.fillText(`${r.totalKills ?? '–'} / ${r.totalRevives ?? '–'} / ${r.totalTeamKills ?? '–'}  (${r.rounds ?? '?'}. kolo)`, cols.total, yy);
+    tabText(g, `${r.totalKills ?? '–'} / ${r.totalRevives ?? '–'} / ${r.totalTeamKills ?? '–'}  (${r.rounds ?? '?'}. kolo)`, cols.total, yy, 'right');
   });
-  const pulse = 1 + Math.sin(time * 4) * 0.03;
   g.textAlign = 'center';
-  g.font = `900 ${Math.round(16 * pulse)}px ${FONT_TITLE}`;
+  g.font = `900 16px ${FONT_TITLE}`;
   g.fillStyle = '#c9e6b8';
-  g.fillText(`Nové kolo za ${snap.round.restartIn} s`, VIEW.w / 2, py + ph - 18);
+  g.save();
+  g.translate(VIEW.w / 2, py + ph - 18);
+  const pulse = 1 + Math.sin(time * 4) * 0.03;
+  g.scale(pulse, pulse);
+  tabText(g, `Nové kolo za ${snap.round.restartIn} s`, 0, 0, 'center');
+  g.restore();
   g.restore();
 }
 
