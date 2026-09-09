@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="cs">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+  <title>Hanka The Fox Hunter</title>
+  <style>
+    :root {
+      --bg: #0b1a12;
+      --panel: rgba(8, 20, 14, 0.88);
+      --accent: #f2a541;
+      --text: #f3f1e6;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Trebuchet MS", "Segoe UI", system-ui, sans-serif;
+      overflow: hidden;
+    }
+    #wrap {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    canvas {
+      display: block;
+      width: min(100vw, calc(100vh * 16 / 9));
+      height: min(100vh, calc(100vw * 9 / 16));
+      image-rendering: auto;
+      background: #0b1a12;
+      touch-action: none;
+    }
+    #overlay {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: radial-gradient(ellipse at center, rgba(20, 50, 30, 0.85), rgba(4, 10, 6, 0.95));
+      z-index: 10;
+    }
+    #overlay.hidden { display: none; }
+    .card {
+      background: var(--panel);
+      border: 2px solid var(--accent);
+      border-radius: 14px;
+      padding: 28px 36px;
+      width: min(92vw, 460px);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+      text-align: center;
+    }
+    .card h1 {
+      margin: 0 0 4px;
+      font-size: 2rem;
+      color: var(--accent);
+      letter-spacing: 1px;
+      text-shadow: 0 2px 0 #7a4a10;
+    }
+    .card .sub { margin: 0 0 20px; opacity: 0.8; font-size: 0.95rem; }
+    .card input {
+      width: 100%;
+      font-size: 1.1rem;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 2px solid #3f7a55;
+      background: #12281b;
+      color: var(--text);
+      outline: none;
+      margin-bottom: 14px;
+      text-align: center;
+    }
+    .card input:focus { border-color: var(--accent); }
+    .card button {
+      width: 100%;
+      font-size: 1.2rem;
+      font-weight: bold;
+      padding: 12px;
+      border: none;
+      border-radius: 8px;
+      background: var(--accent);
+      color: #2b1a05;
+      cursor: pointer;
+      transition: transform 0.08s, background 0.15s;
+    }
+    .card button:hover { background: #ffbd5c; }
+    .card button:active { transform: scale(0.97); }
+    .controls {
+      margin-top: 18px;
+      font-size: 0.85rem;
+      opacity: 0.85;
+      text-align: left;
+      line-height: 1.6;
+    }
+    .controls kbd {
+      background: #1f3a2a;
+      border: 1px solid #3f7a55;
+      border-radius: 4px;
+      padding: 1px 6px;
+      font-family: inherit;
+      font-size: 0.8rem;
+    }
+    #status { margin-top: 10px; font-size: 0.85rem; color: #f28b82; min-height: 1.2em; }
+
+    /* Touch controls (shown only on touch devices) */
+    #touch {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      display: none;
+      z-index: 5;
+    }
+    body.touch #touch { display: block; }
+    .tbtn {
+      position: absolute;
+      bottom: 4vh;
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.18);
+      border: 2px solid rgba(255, 255, 255, 0.5);
+      color: #fff;
+      font-size: 1.6rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: auto;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    .tbtn.active { background: rgba(242, 165, 65, 0.6); }
+    #tLeft { left: 4vw; }
+    #tRight { left: calc(4vw + 80px); }
+    #tJump { right: calc(4vw + 80px); }
+    #tShoot { right: 4vw; }
+  </style>
+</head>
+<body>
+  <div id="wrap"><canvas id="game" width="960" height="540"></canvas></div>
+
+  <div id="touch">
+    <div class="tbtn" id="tLeft" data-key="left">◀</div>
+    <div class="tbtn" id="tRight" data-key="right">▶</div>
+    <div class="tbtn" id="tJump" data-key="jump">⤒</div>
+    <div class="tbtn" id="tShoot" data-key="shoot">✦</div>
+  </div>
+
+  <div id="overlay">
+    <div class="card">
+      <h1>🦊 Hanka The Fox Hunter</h1>
+      <p class="sub">Les je plný lišek. Nenech se sežrat!</p>
+      <input id="name" maxlength="16" placeholder="Tvoje jméno" autocomplete="off" />
+      <button id="play">Hrát</button>
+      <div id="status"></div>
+      <div class="controls">
+        <kbd>A</kbd>/<kbd>D</kbd> nebo <kbd>←</kbd>/<kbd>→</kbd> pohyb &nbsp;·&nbsp;
+        <kbd>W</kbd>/<kbd>↑</kbd>/<kbd>Space</kbd> skok<br />
+        <kbd>Ctrl</kbd>, <kbd>F</kbd>, <kbd>X</kbd> nebo kliknutí myší — střelba<br />
+        Zabij lišku: <b>+10 bodů</b>. Po smrti se za 3 s vrátíš do hry.
+      </div>
+    </div>
+  </div>
+
+  <script src="game.js"></script>
+</body>
+</html>

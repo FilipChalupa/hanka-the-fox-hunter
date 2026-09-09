@@ -1,0 +1,13 @@
+{
+  "name": "hanka-the-fox-hunter",
+  "version": "1.0.0",
+  "description": "Multiplayerová webová skákačka: Hanka loví lišky v lese (WebSockets)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
