@@ -2233,7 +2233,7 @@ function drawGameOver(g, snap, dt, time) {
   const rows = gameOver.ranking.slice(0, 6);
   const pw = 760;
   const rowH = 34;
-  const ph = 150 + rows.length * rowH;
+  const ph = 162 + rows.length * rowH;
   const px = VIEW.w / 2 - pw / 2;
   const py = VIEW.h / 2 - ph / 2;
   g.save();
@@ -2252,17 +2252,22 @@ function drawGameOver(g, snap, dt, time) {
   g.fillText(`Došli jste do vlny ${gameOver.wave} a ulovili ${gameOver.kills} lišek.`, VIEW.w / 2, py + 68);
 
   const cols = { score: px + pw - 430, kills: px + pw - 370, survived: px + pw - 300, total: px + pw - 24 };
+  const hy = py + 94;
   g.font = `900 12px ${FONT_TITLE}`;
   g.fillStyle = '#ffd27f';
   g.textAlign = 'left';
-  g.fillText('Lovec', px + 40, py + 96);
+  g.fillText('Lovec', px + 40, hy);
   g.textAlign = 'right';
-  g.fillText('Body', cols.score, py + 96);
-  g.fillText('Lišky', cols.kills, py + 96);
-  g.fillText('Přežil', cols.survived, py + 96);
-  g.fillText('Celkem: lišky / oživení / teamkilly', cols.total, py + 96);
+  g.fillText('Body', cols.score, hy);
+  g.fillText('Lišky', cols.kills, hy);
+  g.fillText('Přežil', cols.survived, hy);
+  g.fillText('Celkem', cols.total, hy);
+  // Legend for the totals column on its own line, so it never collides with the headers
+  g.font = `700 9px ${FONT_BODY}`;
+  g.fillStyle = 'rgba(243,236,216,0.7)';
+  g.fillText('lišky / oživení / teamkilly (kolo)', cols.total, hy + 12);
   rows.forEach((r, i) => {
-    const yy = py + 118 + i * rowH;
+    const yy = py + 130 + i * rowH;
     g.fillStyle = outfitOf(r).jacket;
     roundRect(g, px + 22, yy - 10, 10, 10, 2);
     g.fill();
