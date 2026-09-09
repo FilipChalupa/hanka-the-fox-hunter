@@ -2497,6 +2497,12 @@ function frame(realNow) {
       ctx.fillStyle = me.reviving ? '#7fe0a8' : '#ffd27f';
       ctx.fillText(text, me.rx + 15 - camX, me.ry - camY - 45);
     }
+    if (me.climbing && input.shoot) {
+      ctx.font = `700 10px ${FONT_BODY}`;
+      ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(255,200,140,0.85)';
+      ctx.fillText('při lezení nejde střílet', me.rx + 15 - camX, me.ry - camY - 34);
+    }
     const trunk = S.trunkAt(world.trunks, { x: me.rx, y: me.ry, w: 30, h: 48 });
     if (trunk && !me.climbing && me.onGround) {
       ctx.font = `700 10px ${FONT_BODY}`;

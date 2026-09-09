@@ -181,7 +181,13 @@ test('hunters can climb a marked trunk and step onto its canopy', () => {
   game.setInput(a.id, input({ jump: true }));
   run(game, 0.5);
   assert.equal(a.climbing, true, 'grabbed the trunk while holding up in the air');
-  run(game, 6);
+  // Hands are on the trunk: shooting does nothing while climbing
+  game.setInput(a.id, input({ jump: true, shoot: true }));
+  const shots = run(game, 1).filter((e) => e.kind === 'shoot');
+  assert.equal(shots.length, 0, 'no shots while climbing');
+  assert.equal(game.bullets.size, 0);
+  game.setInput(a.id, input({ jump: true }));
+  run(game, 5);
   assert.equal(a.climbing, false);
   assert.equal(a.onGround, true);
   assert.equal(Math.round(a.y + a.h), trunk.top, 'standing on the canopy');

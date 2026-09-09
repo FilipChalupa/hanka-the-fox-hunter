@@ -288,7 +288,8 @@ class Game {
     }
     if (wasDashing && p.dashT <= 0) p.invulnTimer = Math.min(p.invulnTimer, 0.1);
 
-    if (inp.shoot && p.shootTimer <= 0 && !p.reviving && p.dashT <= 0) this.fireBullets(p);
+    // Both hands are busy on the trunk: no shooting while climbing.
+    if (inp.shoot && p.shootTimer <= 0 && !p.reviving && p.dashT <= 0 && !p.climbing) this.fireBullets(p);
 
     for (const pk of this.pickups.values()) {
       if (overlaps(p, pk)) {
