@@ -234,6 +234,7 @@
     .tbtn.active { background: rgba(242, 165, 65, 0.7); }
     #tLeft { left: 4vw; }
     #tRight { left: calc(4vw + 82px); }
+    #tDown { right: calc(4vw + 164px); }
     #tJump { right: calc(4vw + 82px); }
     #tShoot { right: 4vw; }
   </style>
@@ -244,6 +245,7 @@
   <div id="touch">
     <div class="tbtn" id="tLeft" data-key="left">◀</div>
     <div class="tbtn" id="tRight" data-key="right">▶</div>
+    <div class="tbtn" id="tDown" data-key="down">⤓</div>
     <div class="tbtn" id="tJump" data-key="jump">⤒</div>
     <div class="tbtn" id="tShoot" data-key="shoot">✦</div>
   </div>
@@ -278,8 +280,9 @@
       <div class="controls">
         <kbd>A</kbd>/<kbd>D</kbd> nebo <kbd>←</kbd>/<kbd>→</kbd> pohyb &nbsp;·&nbsp;
         <kbd>W</kbd>/<kbd>↑</kbd>/<kbd>Space</kbd> skok<br />
-        <kbd>Ctrl</kbd>, <kbd>F</kbd>, <kbd>X</kbd> nebo klik myší — střelba<br />
-        Liška = <b>+10 bodů</b>. Po smrti se za chvilku vrátíš do lesa.
+        <kbd>Ctrl</kbd>, <kbd>F</kbd> nebo <kbd>X</kbd> střelba<br />
+        Liška <b>+10</b>, mega liška <b>+50</b>. Kdo umře, poletuje jako duch
+        (<kbd>W</kbd>/<kbd>S</kbd>). Když padnou všichni, začne nové kolo.
       </div>
     </div>
   </div>

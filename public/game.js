@@ -5,9 +5,25 @@
 // ===========================================================================
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
-const VIEW = { w: canvas.width, h: canvas.height };
+// Logical resolution: all drawing uses these coordinates; the backing store is
+// resized to the real on-screen pixel size (times devicePixelRatio) so nothing is blurry.
+const VIEW = { w: 960, h: 540 };
 const ZOOM = 1.35;
 const CAM = { w: VIEW.w / ZOOM, h: VIEW.h / ZOOM };
+let renderScale = 1;
+
+function resizeCanvas() {
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.max(1, Math.round(rect.width * dpr));
+  const h = Math.max(1, Math.round(rect.height * dpr));
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w;
+    canvas.height = h;
+  }
+  renderScale = w / VIEW.w;
+}
+window.addEventListener('resize', resizeCanvas);
 
 const overlay = document.getElementById('overlay');
 const nameInput = document.getElementById('name');
@@ -45,8 +61,10 @@ let shake = 0;
 let hitStop = 0;
 let hurtFlash = 0;
 let latency = 0;
-let waveBanner = null;
+let banner = null; // big centre announcement {title, sub, color, glow, t, maxT}
+let gameOver = null; // {ranking, wave, kills, t}
 let lastWave = 0;
+let ghostHint = 0; // seconds left to show the "you are a ghost" panel
 let scoreShown = 0;
 let scoreBump = 0;
 let owl = null;
@@ -195,7 +213,7 @@ const SFX = {
 // ===========================================================================
 // Input
 // ===========================================================================
-const input = { left: false, right: false, jump: false, shoot: false };
+const input = { left: false, right: false, jump: false, shoot: false, down: false };
 let lastSent = '';
 
 function send(obj) {
@@ -204,27 +222,22 @@ function send(obj) {
 
 function sendInput() {
   if (!myId) return;
-  const key = `${input.left}${input.right}${input.jump}${input.shoot}`;
+  const key = `${input.left}${input.right}${input.jump}${input.shoot}${input.down}`;
   if (key === lastSent) return;
   lastSent = key;
   send({ t: 'input', ...input });
-}
-
-function requestRespawn() {
-  const me = currSnap && currSnap.data.players.find((p) => p.id === myId);
-  if (me && !me.alive && me.canRespawn) send({ t: 'respawn' });
 }
 
 const KEYMAP = {
   ArrowLeft: 'left', KeyA: 'left',
   ArrowRight: 'right', KeyD: 'right',
   ArrowUp: 'jump', KeyW: 'jump', Space: 'jump',
+  ArrowDown: 'down', KeyS: 'down',
   ControlLeft: 'shoot', ControlRight: 'shoot', KeyF: 'shoot', KeyX: 'shoot',
 };
 
 window.addEventListener('keydown', (e) => {
   if (document.activeElement === nameInput) return;
-  if (e.code === 'Space' || e.code === 'Enter') requestRespawn();
   const action = KEYMAP[e.code];
   if (!action) return;
   e.preventDefault();
@@ -244,19 +257,7 @@ window.addEventListener('blur', () => {
   for (const k in input) input[k] = false;
   sendInput();
 });
-canvas.addEventListener('mousedown', (e) => {
-  if (e.button !== 0) return;
-  ensureAudio();
-  requestRespawn();
-  input.shoot = true;
-  sendInput();
-});
-window.addEventListener('mouseup', () => {
-  if (input.shoot) {
-    input.shoot = false;
-    sendInput();
-  }
-});
+canvas.addEventListener('mousedown', () => ensureAudio());
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
 if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
@@ -266,7 +267,6 @@ if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
     const on = (e) => {
       e.preventDefault();
       ensureAudio();
-      if (key === 'jump') requestRespawn();
       btn.classList.add('active');
       input[key] = true;
       sendInput();
@@ -316,6 +316,8 @@ function connect(name) {
       prevSnap = currSnap;
       currSnap = { data: msg, at: performance.now() };
       if (lastWave === 0) lastWave = msg.wave;
+      if (msg.round.over && !gameOver) gameOver = { ranking: [...msg.players].sort((a, b) => b.score - a.score), wave: msg.wave, kills: msg.kills, t: 0 };
+      if (!msg.round.over && gameOver) gameOver = null;
       handleEvents(msg.events);
     } else if (msg.t === 'pong') {
       latency = Math.round(performance.now() - msg.ts);
@@ -384,6 +386,11 @@ if (document.fonts && document.fonts.load) {
 // ===========================================================================
 // Events -> effects
 // ===========================================================================
+function playerName(id) {
+  const p = currSnap && currSnap.data.players.find((pl) => pl.id === id);
+  return p ? p.name : '?';
+}
+
 function addFeed(text, color = '#fff') {
   feed.unshift({ text, color, life: 6 });
   if (feed.length > 6) feed.pop();
@@ -409,6 +416,10 @@ function burst(x, y, n, opts) {
 
 function dust(x, y, n = 6) {
   burst(x, y, n, { colors: ['#b7a37a', '#8d7b55', '#d8c9a3'], minSpeed: 20, maxSpeed: 80, life: 0.4, size: 4, gravity: 120, up: 30, round: true });
+}
+
+function announce(title, sub, color = '#e8d9ff', glow = '#7a4fd1', maxT = 3.5) {
+  banner = { title, sub, color, glow, t: 0, maxT };
 }
 
 function anim(id) {
@@ -438,14 +449,19 @@ function handleEvents(events) {
         SFX.hit();
         break;
       case 'kill': {
-        burst(ev.x, ev.y, 14, { colors: ['#e0561f', '#ff8c42', '#ffffff'], maxSpeed: 260, life: 0.8, up: 80 });
-        burst(ev.x, ev.y, 8, { colors: ['rgba(255,255,255,0.7)', '#ddd'], minSpeed: 10, maxSpeed: 50, life: 0.9, size: 9, gravity: -40, round: true });
+        const big = ev.mega ? 2.5 : 1;
+        burst(ev.x, ev.y, 14 * big, { colors: ['#e0561f', '#ff8c42', '#ffffff'], maxSpeed: 260 * big, life: 0.8, up: 80 });
+        burst(ev.x, ev.y, 8 * big, { colors: ['rgba(255,255,255,0.7)', '#ddd'], minSpeed: 10, maxSpeed: 50 * big, life: 0.9, size: 9 * big, gravity: -40, round: true });
         const fox = currSnap && currSnap.data.foxes.find((f) => f.id === ev.id);
-        dyingFoxes.push({ x: ev.x, y: ev.y, facing: fox ? fox.facing : 1, t: 0, maxT: 0.7 });
+        dyingFoxes.push({ x: ev.x, y: ev.y, facing: fox ? fox.facing : 1, mega: !!ev.mega, scale: fox ? fox.w / 46 : 1, t: 0, maxT: ev.mega ? 1.1 : 0.7 });
         if (ev.by === myId) {
-          scoreFlyers.push({ wx: ev.x, wy: ev.y - 20, t: 0, text: '+10' });
-          shake = Math.max(shake, 4);
-          hitStop = 0.04;
+          scoreFlyers.push({ wx: ev.x, wy: ev.y - 20, t: 0, text: `+${ev.score || 10}`, delta: ev.score || 10 });
+          shake = Math.max(shake, ev.mega ? 12 : 4);
+          hitStop = ev.mega ? 0.09 : 0.04;
+        }
+        if (ev.mega) {
+          flashes.push({ x: ev.x, y: ev.y, r: 260, t: 0.5, maxT: 0.5, color: '255,120,60' });
+          addFeed(`💥 ${ev.by ? playerName(ev.by) : 'Někdo'} složil(a) MEGA lišku!`, '#ffb347');
         }
         SFX.kill();
         break;
@@ -464,10 +480,12 @@ function handleEvents(events) {
         break;
       case 'death':
         burst(ev.x, ev.y, 24, { colors: ['#d61f1f', '#8f0e0e', '#ffffff'], maxSpeed: 300, life: 1, up: 120 });
+        burst(ev.x, ev.y, 10, { colors: ['rgba(200,230,255,0.8)', 'rgba(255,255,255,0.6)'], minSpeed: 10, maxSpeed: 40, life: 1.2, size: 8, gravity: -80, round: true });
         addFeed(`🦊 Lišky dostaly hráče ${ev.name}`, '#ff8b8b');
         if (ev.id === myId) {
           shake = 16;
           hurtFlash = 1;
+          ghostHint = 7;
           SFX.death();
         }
         break;
@@ -484,13 +502,31 @@ function handleEvents(events) {
         dust(ev.x, ev.y, 3);
         break;
       case 'wave':
-        waveBanner = { wave: ev.wave, maxFoxes: ev.maxFoxes, t: 0, maxT: 3.5 };
+        announce(`Vlna ${ev.wave}`, `Lišky zuří. Přichází jich až ${ev.maxFoxes}.`);
         lastWave = ev.wave;
         addFeed(`🌙 Vlna ${ev.wave}: přichází až ${ev.maxFoxes} lišek`, '#c9b3ff');
         SFX.wave();
         break;
+      case 'mega':
+        announce(ev.count > 1 ? `${ev.count}× MEGA LIŠKA!` : 'MEGA LIŠKA!', 'Země se třese. Schovej se, nebo střílej.', '#ffb347', '#d63d3d', 4);
+        addFeed(`🔥 Přichází ${ev.count > 1 ? ev.count + ' mega lišky' : 'mega liška'}!`, '#ffb347');
+        shake = Math.max(shake, 10);
+        playTone({ type: 'sawtooth', from: 120, to: 40, dur: 0.9, gain: 0.12 });
+        break;
+      case 'gameover':
+        gameOver = { ranking: ev.ranking, wave: ev.wave, kills: ev.kills, t: 0 };
+        addFeed('☠️ Lišky ovládly les. Nové kolo za chvíli.', '#ff8b8b');
+        playTone({ type: 'sawtooth', from: 300, to: 50, dur: 1.4, gain: 0.1 });
+        break;
+      case 'newround':
+        gameOver = null;
+        ghostHint = 0;
+        scoreShown = 0;
+        announce(`Kolo ${ev.number}`, 'Les je zase tichý. Zatím.', '#c9e6b8', '#2f6b32', 3);
+        SFX.wave();
+        break;
       case 'join':
-        addFeed(`➕ ${ev.name} vstoupil(a) do lesa`, '#a8e6a1');
+        addFeed(`➕ ${ev.name} vstoupil(a) do lesa${ev.ghost ? ' jako duch' : ''}`, '#a8e6a1');
         break;
       case 'leave':
         addFeed(`➖ ${ev.name} opustil(a) les`, '#bbb');
@@ -1030,15 +1066,17 @@ function drawHunter(g, p, x, y, time, isMe, camX, camY) {
 }
 
 function drawFoxSprite(g, opts) {
-  const { facing = 1, run = 0, air = false, bite = 0, hurt = false, alpha = 1, rot = 0 } = opts;
+  const { facing = 1, run = 0, air = false, bite = 0, hurt = false, alpha = 1, rot = 0, mega = false, scale = 1, time = 0 } = opts;
   g.save();
   g.globalAlpha = alpha;
   g.rotate(rot);
-  g.scale(facing, 1);
+  g.scale(facing * scale, scale);
   if (air) g.scale(1.14, 0.86);
+  const fur = hurt ? '#ffb38a' : mega ? '#b8391a' : '#e0561f';
+  const furLight = hurt ? '#ffc39a' : mega ? '#c9461f' : '#e8641f';
 
   // Tail
-  g.fillStyle = hurt ? '#ffb38a' : '#e0561f';
+  g.fillStyle = fur;
   g.beginPath();
   g.moveTo(-16, -16);
   g.quadraticCurveTo(-34, -26 + run * 4, -30, -8 + run * 3);
@@ -1058,17 +1096,37 @@ function drawFoxSprite(g, opts) {
   g.fillRect(13 - run * 4, -10, 5, 10);
 
   // Body
-  g.fillStyle = hurt ? '#ffc39a' : '#e8641f';
+  g.fillStyle = furLight;
   g.beginPath();
   g.ellipse(-2, -16, 18, 9, 0, 0, Math.PI * 2);
   g.fill();
+  if (mega) {
+    // Scars and a spiky mane
+    g.strokeStyle = '#4a1508';
+    g.lineWidth = 1.2;
+    for (let i = 0; i < 3; i++) {
+      g.beginPath();
+      g.moveTo(-10 + i * 5, -22);
+      g.lineTo(-7 + i * 5, -14);
+      g.stroke();
+    }
+    g.fillStyle = '#7a2410';
+    for (let i = -14; i < 8; i += 5) {
+      g.beginPath();
+      g.moveTo(i, -22);
+      g.lineTo(i + 2.5, -29 + Math.sin(time * 10 + i) * 1.5);
+      g.lineTo(i + 5, -22);
+      g.closePath();
+      g.fill();
+    }
+  }
   g.fillStyle = '#ffe3c8';
   g.beginPath();
   g.ellipse(-2, -12, 12, 4, 0, 0, Math.PI * 2);
   g.fill();
 
   // Head
-  g.fillStyle = hurt ? '#ffc39a' : '#e8641f';
+  g.fillStyle = furLight;
   g.beginPath();
   g.ellipse(16, -20, 9, 7, 0, 0, Math.PI * 2);
   g.fill();
@@ -1102,7 +1160,7 @@ function drawFoxSprite(g, opts) {
   g.fillStyle = '#222';
   g.fillRect(25, -16, 3, 2);
   // Ears
-  g.fillStyle = '#e0561f';
+  g.fillStyle = fur;
   g.beginPath();
   g.moveTo(10, -25);
   g.lineTo(13, -34);
@@ -1115,11 +1173,17 @@ function drawFoxSprite(g, opts) {
   g.lineTo(24, -25);
   g.closePath();
   g.fill();
-  // Eye (angry)
-  g.fillStyle = '#fff';
+  // Eye (angry; mega foxes glow)
+  g.fillStyle = mega ? '#ffe066' : '#fff';
   g.fillRect(17, -23, 4, 3);
-  g.fillStyle = '#111';
+  g.fillStyle = mega ? '#d61f1f' : '#111';
   g.fillRect(19, -23, 2, 3);
+  if (mega) {
+    g.fillStyle = 'rgba(255,200,80,0.35)';
+    g.beginPath();
+    g.arc(19, -21.5, 5, 0, Math.PI * 2);
+    g.fill();
+  }
   g.strokeStyle = '#3a1a08';
   g.lineWidth = 1.5;
   g.beginPath();
@@ -1131,28 +1195,75 @@ function drawFoxSprite(g, opts) {
 
 function drawFox(g, f, x, y, time, camX, camY) {
   const a = anim(f.id);
+  const w = f.w || 46;
+  const h = f.h || 28;
+  const scale = w / 46;
   const moving = Math.abs(f.vx) > 10 && f.onGround;
-  const run = moving ? Math.sin(time * 18 + f.id) : f.onGround ? 0 : 0.8;
-  drawShadow(g, f.rx, 46, f.ry + 28, camX, camY);
+  const run = moving ? Math.sin(time * (f.mega ? 11 : 18) + f.id) : f.onGround ? 0 : 0.8;
+  drawShadow(g, f.rx, w, f.ry + h, camX, camY);
   g.save();
-  g.translate(x + 23, y + 28);
+  g.translate(x + w / 2, y + h);
   g.scale(1 + a.squash * 0.15, 1 - a.squash * 0.2);
-  drawFoxSprite(g, { facing: f.facing, run, air: !f.onGround, bite: a.bite > 0 ? Math.sin((a.bite / 0.25) * Math.PI) : 0, hurt: a.hurt > 0 });
+  drawFoxSprite(g, { facing: f.facing, run, air: !f.onGround, bite: a.bite > 0 ? Math.sin((a.bite / 0.25) * Math.PI) : 0, hurt: a.hurt > 0, mega: f.mega, scale, time });
   g.restore();
-  if (f.hp < f.maxHp) {
+  if (f.mega || f.hp < f.maxHp) {
+    const bw = f.mega ? 60 : 28;
     g.fillStyle = 'rgba(0,0,0,0.5)';
-    g.fillRect(x + 9, y - 10, 28, 4);
-    g.fillStyle = '#ff8c42';
-    g.fillRect(x + 9, y - 10, 28 * (f.hp / f.maxHp), 4);
+    g.fillRect(x + w / 2 - bw / 2, y - 12, bw, f.mega ? 6 : 4);
+    g.fillStyle = f.mega ? '#ff4d2e' : '#ff8c42';
+    g.fillRect(x + w / 2 - bw / 2, y - 12, bw * (f.hp / f.maxHp), f.mega ? 6 : 4);
+    if (f.mega) {
+      g.font = `900 9px ${FONT_TITLE}`;
+      g.textAlign = 'center';
+      g.fillStyle = '#ffb347';
+      g.fillText('MEGA', x + w / 2, y - 16);
+    }
   }
 }
 
 function drawDyingFox(g, d, camX, camY) {
   const k = d.t / d.maxT;
   g.save();
-  g.translate(d.x - camX, d.y - camY + 14 - Math.sin(k * Math.PI) * 30);
-  drawFoxSprite(g, { facing: d.facing, run: 0, alpha: 1 - k * k, rot: -d.facing * k * 3.2 });
+  g.translate(d.x - camX, d.y - camY + 14 * (d.scale || 1) - Math.sin(k * Math.PI) * 30);
+  drawFoxSprite(g, { facing: d.facing, run: 0, alpha: 1 - k * k, rot: -d.facing * k * 3.2, mega: d.mega, scale: d.scale || 1 });
   g.restore();
+}
+
+function drawGhost(g, p, x, y, time, isMe) {
+  const cx = x + 15;
+  const bob = Math.sin(time * 2.5 + p.id) * 3;
+  g.save();
+  g.translate(cx, y + 48 + bob);
+  g.scale(p.facing, 1);
+  g.globalAlpha = isMe ? 0.7 : 0.5;
+  // Body: rounded top, wavy hem
+  g.fillStyle = '#dff3ff';
+  g.beginPath();
+  g.moveTo(-12, -8);
+  g.lineTo(-12, -40);
+  g.arc(0, -40, 12, Math.PI, 0);
+  g.lineTo(12, -8);
+  for (let i = 12; i > -12; i -= 6) g.quadraticCurveTo(i - 3, -2 + Math.sin(time * 6 + i) * 2, i - 6, -8);
+  g.closePath();
+  g.fill();
+  // Little hat so you can still tell who it is
+  g.fillStyle = outfitOf(p).hat;
+  g.globalAlpha = isMe ? 0.8 : 0.6;
+  g.fillRect(-11, -52, 22, 4);
+  g.fillRect(-7, -58, 14, 6);
+  // Eyes
+  g.globalAlpha = 1;
+  g.fillStyle = '#2b3a4a';
+  g.fillRect(-5, -42, 3, 4);
+  g.fillRect(3, -42, 3, 4);
+  g.restore();
+  g.font = `800 11px ${FONT_BODY}`;
+  g.textAlign = 'center';
+  g.lineWidth = 3;
+  g.strokeStyle = 'rgba(0,0,0,0.6)';
+  g.fillStyle = 'rgba(223,243,255,0.8)';
+  g.strokeText(`${p.name} 👻`, cx, y - 14 + bob);
+  g.fillText(`${p.name} 👻`, cx, y - 14 + bob);
 }
 
 function drawBullet(g, b, x, y) {
@@ -1256,12 +1367,12 @@ function drawMinimap(g, snap, camX, camY) {
   g.lineWidth = 1;
   g.strokeRect(ix + camX * sx, iy + camY * sy, CAM.w * sx, CAM.h * sy);
   for (const f of snap.foxes) {
-    g.fillStyle = '#ff8c42';
-    g.fillRect(ix + f.x * sx - 1.5, iy + f.y * sy - 1.5, 3, 3);
+    const r = f.mega ? 3 : 1.5;
+    g.fillStyle = f.mega ? '#ff4d2e' : '#ff8c42';
+    g.fillRect(ix + f.x * sx - r, iy + f.y * sy - r, r * 2, r * 2);
   }
   for (const p of snap.players) {
-    if (!p.alive) continue;
-    g.fillStyle = p.id === myId ? '#ffd27f' : outfitOf(p).trim;
+    g.fillStyle = !p.alive ? 'rgba(223,243,255,0.5)' : p.id === myId ? '#ffd27f' : outfitOf(p).trim;
     g.beginPath();
     g.arc(ix + p.x * sx, iy + p.y * sy, p.id === myId ? 3 : 2.5, 0, Math.PI * 2);
     g.fill();
@@ -1277,11 +1388,11 @@ function drawHUD(g, me, snap, dt) {
   g.fillText('Hanka The Fox Hunter', 24, 34);
   g.font = `800 12px ${FONT_BODY}`;
   g.fillStyle = '#f3ecd8';
-  g.fillText(`Vlna ${snap.wave}`, 24, 54);
+  g.fillText(`Kolo ${snap.round.number} · Vlna ${snap.wave}`, 24, 54);
   g.fillStyle = '#ffb08a';
-  g.fillText(`🦊 ${snap.foxes.length}/${snap.maxFoxes}`, 84, 54);
+  g.fillText(`🦊 ${snap.foxes.length}/${snap.maxFoxes}`, 138, 54);
   g.fillStyle = '#c9e6b8';
-  g.fillText(`Uloveno: ${snap.kills}`, 160, 54);
+  g.fillText(`Ulov. ${snap.kills}`, 196, 54);
   const hp = me ? me.hp : 0;
   for (let i = 0; i < 5; i++) drawHeart(g, 34 + i * 22, 74, 1.7, clamp((hp - i * 20) / 20, 0, 1));
   g.fillStyle = '#f3ecd8';
@@ -1307,7 +1418,7 @@ function drawHUD(g, me, snap, dt) {
     g.fill();
     g.fillStyle = p.id === myId ? '#ffd27f' : p.alive ? '#f3ecd8' : '#a08c78';
     g.textAlign = 'left';
-    g.fillText(`${i + 1}. ${p.name}${p.alive ? '' : ' ✝'}`, bx + 30, yy);
+    g.fillText(`${i + 1}. ${p.name}${p.alive ? '' : ' 👻'}`, bx + 30, yy);
     g.textAlign = 'right';
     if (p.id === myId) {
       g.save();
@@ -1345,84 +1456,114 @@ function drawHUD(g, me, snap, dt) {
   g.fillText(`${latency} ms`, VIEW.w - 14, VIEW.h - 10);
 }
 
-function drawWaveBanner(g, dt) {
-  if (!waveBanner) return;
-  waveBanner.t += dt;
-  const { t, maxT } = waveBanner;
+function drawBanner(g, dt) {
+  if (!banner) return;
+  banner.t += dt;
+  const { t, maxT } = banner;
   if (t >= maxT) {
-    waveBanner = null;
+    banner = null;
     return;
   }
   const inK = easeOut(clamp(t / 0.4, 0, 1));
   const outK = clamp((maxT - t) / 0.5, 0, 1);
-  const a = Math.min(inK, outK);
   g.save();
-  g.globalAlpha = a;
-  g.translate(VIEW.w / 2, VIEW.h * 0.32);
+  g.globalAlpha = Math.min(inK, outK);
+  g.translate(VIEW.w / 2, VIEW.h * 0.3);
   g.scale(0.7 + inK * 0.3, 0.7 + inK * 0.3);
   g.fillStyle = 'rgba(20,10,30,0.55)';
-  roundRect(g, -220, -46, 440, 92, 12);
+  roundRect(g, -230, -46, 460, 92, 12);
   g.fill();
-  g.strokeStyle = '#c9b3ff';
+  g.strokeStyle = banner.color;
   g.lineWidth = 2;
   g.stroke();
   g.textAlign = 'center';
-  g.font = `900 40px ${FONT_TITLE}`;
-  g.fillStyle = '#e8d9ff';
-  g.shadowColor = '#7a4fd1';
+  g.font = `900 38px ${FONT_TITLE}`;
+  g.fillStyle = banner.color;
+  g.shadowColor = banner.glow;
   g.shadowBlur = 18;
-  g.fillText(`Vlna ${waveBanner.wave}`, 0, 4);
+  g.fillText(banner.title, 0, 4);
   g.shadowBlur = 0;
   g.font = `700 15px ${FONT_BODY}`;
   g.fillStyle = '#f3ecd8';
-  g.fillText(`Lišky zuří. Přichází jich až ${waveBanner.maxFoxes}.`, 0, 30);
+  g.fillText(banner.sub, 0, 30);
   g.restore();
 }
 
-function drawDeathScreen(g, me, time) {
-  g.fillStyle = 'rgba(40,0,0,0.5)';
+function drawGhostHint(g, me, dt) {
+  if (ghostHint <= 0 || gameOver) return;
+  ghostHint -= dt;
+  const a = clamp(ghostHint, 0, 1);
+  g.save();
+  g.globalAlpha = a;
+  const pw = 420;
+  const ph = 74;
+  const px = VIEW.w / 2 - pw / 2;
+  const py = 104;
+  drawPanel(g, px, py, pw, ph);
+  g.textAlign = 'center';
+  g.font = `900 20px ${FONT_TITLE}`;
+  g.fillStyle = '#dff3ff';
+  g.fillText('Lišky tě dostaly. Teď jsi duch.', VIEW.w / 2, py + 30);
+  g.font = `700 12px ${FONT_BODY}`;
+  g.fillStyle = '#f3ecd8';
+  g.fillText(`Přežil(a) jsi ${me.survived} s, ulovil(a) ${me.lifeKills} lišek. Poletuj (W/S) a fanděte ostatním.`, VIEW.w / 2, py + 52);
+  g.restore();
+}
+
+function drawGameOver(g, snap, dt, time) {
+  if (!gameOver) return;
+  gameOver.t += dt;
+  const k = easeOut(clamp(gameOver.t / 0.6, 0, 1));
+  g.fillStyle = `rgba(30,0,0,${0.55 * k})`;
   g.fillRect(0, 0, VIEW.w, VIEW.h);
-  const pw = 400;
-  const ph = 200;
+  const rows = gameOver.ranking.slice(0, 6);
+  const pw = 440;
+  const ph = 150 + rows.length * 22;
   const px = VIEW.w / 2 - pw / 2;
   const py = VIEW.h / 2 - ph / 2;
+  g.save();
+  g.globalAlpha = k;
+  g.translate(0, (1 - k) * 30);
   drawPanel(g, px, py, pw, ph);
   g.textAlign = 'center';
   g.font = `900 30px ${FONT_TITLE}`;
   g.fillStyle = '#ff8b8b';
-  g.fillText('Lišky tě dostaly!', VIEW.w / 2, py + 46);
-  g.font = `700 14px ${FONT_BODY}`;
+  g.shadowColor = '#d63d3d';
+  g.shadowBlur = 14;
+  g.fillText('Lišky ovládly les', VIEW.w / 2, py + 44);
+  g.shadowBlur = 0;
+  g.font = `700 13px ${FONT_BODY}`;
   g.fillStyle = '#f3ecd8';
-  g.fillText(`Přežil(a) jsi ${me.survived} s a ulovil(a) ${me.lifeKills} lišek.`, VIEW.w / 2, py + 82);
-  g.fillStyle = '#c9e6b8';
-  g.fillText(`Rekord: ${me.best} s · ${me.bestKills} lišek v jednom životě`, VIEW.w / 2, py + 104);
-  if (me.canRespawn) {
-    const pulse = 1 + Math.sin(time * 6) * 0.04;
-    g.save();
-    g.translate(VIEW.w / 2, py + 152);
-    g.scale(pulse, pulse);
-    const bw = 220;
-    const bh = 38;
-    const grd = g.createLinearGradient(0, -bh / 2, 0, bh / 2);
-    grd.addColorStop(0, '#ffc35c');
-    grd.addColorStop(1, '#e08b1f');
-    g.fillStyle = grd;
-    roundRect(g, -bw / 2, -bh / 2, bw, bh, 8);
+  g.fillText(`Došli jste do vlny ${gameOver.wave} a ulovili ${gameOver.kills} lišek.`, VIEW.w / 2, py + 68);
+
+  g.font = `900 13px ${FONT_TITLE}`;
+  g.fillStyle = '#ffd27f';
+  g.textAlign = 'left';
+  g.fillText('Lovec', px + 40, py + 96);
+  g.textAlign = 'right';
+  g.fillText('Body', px + pw - 160, py + 96);
+  g.fillText('Lišky', px + pw - 96, py + 96);
+  g.fillText('Přežil', px + pw - 24, py + 96);
+  g.font = `700 13px ${FONT_BODY}`;
+  rows.forEach((r, i) => {
+    const yy = py + 118 + i * 22;
+    g.fillStyle = outfitOf(r).jacket;
+    roundRect(g, px + 22, yy - 10, 10, 10, 2);
     g.fill();
-    g.strokeStyle = '#2b1708';
-    g.lineWidth = 2.5;
-    g.stroke();
-    g.fillStyle = '#2b1708';
-    g.font = `900 15px ${FONT_TITLE}`;
-    g.fillText('Rychle zpět', 0, -1);
-    g.font = `700 10px ${FONT_BODY}`;
-    g.fillText('Space / Enter / klik', 0, 13);
-    g.restore();
-  } else {
-    g.font = `700 16px ${FONT_BODY}`;
-    g.fillStyle = '#ffd27f';
-    g.fillText(`Zpátky do lesa za ${me.respawn} s…`, VIEW.w / 2, py + 156);
-  }
+    g.fillStyle = r.id === myId ? '#ffd27f' : '#f3ecd8';
+    g.textAlign = 'left';
+    g.fillText(`${i + 1}. ${r.name}`, px + 40, yy);
+    g.textAlign = 'right';
+    g.fillText(`${r.score}`, px + pw - 160, yy);
+    g.fillText(`${r.kills}`, px + pw - 96, yy);
+    g.fillText(`${r.survived} s`, px + pw - 24, yy);
+  });
+  const pulse = 1 + Math.sin(time * 4) * 0.03;
+  g.textAlign = 'center';
+  g.font = `900 ${Math.round(16 * pulse)}px ${FONT_TITLE}`;
+  g.fillStyle = '#c9e6b8';
+  g.fillText(`Nové kolo za ${snap.round.restartIn} s`, VIEW.w / 2, py + ph - 18);
+  g.restore();
 }
 
 // ===========================================================================
@@ -1433,7 +1574,13 @@ function drawDeathScreen(g, me, time) {
   if (overlay.classList.contains('hidden')) return;
   const g = previewCanvas.getContext('2d');
   const t = performance.now() / 1000;
-  g.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+  const dpr = window.devicePixelRatio || 1;
+  if (previewCanvas.width !== Math.round(120 * dpr)) {
+    previewCanvas.width = Math.round(120 * dpr);
+    previewCanvas.height = Math.round(130 * dpr);
+  }
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, 120, 130);
   g.fillStyle = 'rgba(0,0,0,0.35)';
   g.beginPath();
   g.ellipse(60, 112, 26, 6, 0, 0, Math.PI * 2);
@@ -1468,6 +1615,8 @@ function frame(realNow) {
   requestAnimationFrame(frame);
   const realDt = Math.min((realNow - lastFrame) / 1000, 0.1);
   lastFrame = realNow;
+  resizeCanvas();
+  ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
 
   // Hit-stop: freeze the world for a few milliseconds after a kill.
   let now = realNow;
@@ -1485,6 +1634,7 @@ function frame(realNow) {
     ctx.scale(ZOOM, ZOOM);
     drawBackground(ctx, 0, world.height - CAM.h, time, 1);
     ctx.restore();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     return;
   }
 
@@ -1507,8 +1657,9 @@ function frame(realNow) {
     a.lastSeen = now;
     if (!a.wasGround && e.onGround) {
       a.squash = 1;
-      dust(e.rx + (e.maxHp ? 23 : 15), e.ry + (e.maxHp ? 28 : 48), 5);
+      dust(e.rx + (e.w || 30) / 2, e.ry + (e.h || 48), e.mega ? 12 : 5);
       if (e.id === myId) SFX.land();
+      if (e.mega) shake = Math.max(shake, 5);
     }
     a.wasGround = e.onGround;
     a.squash = Math.max(0, a.squash - dt * 6);
@@ -1559,8 +1710,8 @@ function frame(realNow) {
   for (const d of dyingFoxes) drawDyingFox(ctx, d, camX, camY);
   for (const f of foxesR) drawFox(ctx, f, f.rx - camX, f.ry - camY, time, camX, camY);
   for (const p of playersR) {
-    if (!p.alive) continue;
-    drawHunter(ctx, p, p.rx - camX, p.ry - camY, time, p.id === myId, camX, camY);
+    if (p.alive) drawHunter(ctx, p, p.rx - camX, p.ry - camY, time, p.id === myId, camX, camY);
+    else drawGhost(ctx, p, p.rx - camX, p.ry - camY, time, p.id === myId);
   }
 
   // Particles
@@ -1664,7 +1815,7 @@ function frame(realNow) {
     if (f.t >= 1) {
       scoreFlyers.splice(i, 1);
       scoreBump = 1;
-      scoreShown += 10;
+      scoreShown += f.delta || 10;
       continue;
     }
     const k = easeOut(f.t);
@@ -1688,8 +1839,10 @@ function frame(realNow) {
 
   drawHUD(ctx, me, snap, dt);
   drawMinimap(ctx, snap, camX, camY);
-  drawWaveBanner(ctx, dt);
-  if (me && !me.alive) drawDeathScreen(ctx, me, time);
+  drawBanner(ctx, dt);
+  if (me && !me.alive) drawGhostHint(ctx, me, dt);
+  drawGameOver(ctx, snap, dt, time);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
 
 requestAnimationFrame(frame);

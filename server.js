@@ -46,8 +46,11 @@ const MAX_FALL = 1300;
 const TICK_RATE = 60;
 const SNAPSHOT_RATE = 20;
 
-const PLAYER = { w: 30, h: 48, speed: 270, jump: 680, hp: 100, shootCooldown: 0.22, invuln: 0.6, respawn: 3 };
-const FOX = { w: 46, h: 28, hp: 30, damage: 12, biteCooldown: 0.9, jump: 560 };
+const PLAYER = { w: 30, h: 48, speed: 270, jump: 680, hp: 100, shootCooldown: 0.22, invuln: 0.6, ghostSpeed: 220 };
+const FOX = { w: 46, h: 28, hp: 30, damage: 12, biteCooldown: 0.9, jump: 720, score: 10 };
+// Mega fox: arrives every `every` waves; later waves bring several at once.
+const MEGA = { w: 92, h: 56, hp: 150, damage: 30, biteCooldown: 1.2, jump: 820, score: 50, every: 3 };
+const ROUND_RESTART = 12; // seconds between "everyone is dead" and the next round
 const BULLET = { speed: 1000, life: 1.1, damage: 10, w: 10, h: 4 };
 
 // Platforms: first one is the ground (solid), the rest are one-way (you can jump through them from below).
@@ -85,6 +88,7 @@ let totalKills = 0;
 let spawnTimer = 2;
 let gameTime = 0;
 let announcedWave = 1;
+const round = { number: 1, over: false, restartTimer: 0, startedAt: 0 };
 
 const rand = (a, b) => a + Math.random() * (b - a);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -152,23 +156,24 @@ function createPlayer(ws, name, wantedOutfit) {
     lifeKills: 0,
     bestSurvival: 0,
     bestLifeKills: 0,
+    bestScore: 0,
     x: SPAWN_POINT.x + rand(-80, 80),
     y: SPAWN_POINT.y,
     vx: 0,
     vy: 0,
     w: PLAYER.w,
     h: PLAYER.h,
-    hp: PLAYER.hp,
+    hp: round.over ? 0 : PLAYER.hp,
     score: 0,
     kills: 0,
     deaths: 0,
     facing: 1,
     onGround: false,
-    alive: true,
-    respawnTimer: 0,
+    alive: !round.over,
+    lastSurvival: 0,
     shootTimer: 0,
     invulnTimer: 0,
-    input: { left: false, right: false, jump: false, shoot: false },
+    input: { left: false, right: false, jump: false, shoot: false, down: false },
     jumpHeld: false,
   };
   players.set(id, player);
@@ -180,6 +185,8 @@ function respawnPlayer(p) {
   p.hp = PLAYER.hp;
   p.spawnedAt = gameTime;
   p.lifeKills = 0;
+  p.score = 0;
+  p.kills = 0;
   p.x = SPAWN_POINT.x + rand(-80, 80);
   p.y = SPAWN_POINT.y;
   p.vx = 0;
@@ -188,10 +195,21 @@ function respawnPlayer(p) {
   pushEvent({ kind: 'respawn', id: p.id, x: p.x, y: p.y });
 }
 
+function updateGhost(p, dt) {
+  const inp = p.input;
+  const dir = (inp.right ? 1 : 0) - (inp.left ? 1 : 0);
+  const vdir = (inp.down ? 1 : 0) - (inp.jump ? 1 : 0);
+  p.vx = dir * PLAYER.ghostSpeed;
+  p.vy = vdir * PLAYER.ghostSpeed;
+  if (dir !== 0) p.facing = dir;
+  p.x = clamp(p.x + p.vx * dt, 0, WORLD.width - p.w);
+  p.y = clamp(p.y + p.vy * dt, 0, WORLD.groundY - p.h);
+  p.onGround = false;
+}
+
 function updatePlayer(p, dt) {
   if (!p.alive) {
-    p.respawnTimer -= dt;
-    if (p.respawnTimer <= 0) respawnPlayer(p);
+    updateGhost(p, dt);
     return;
   }
 
@@ -244,33 +262,82 @@ function damagePlayer(p, amount, fromX) {
     p.hp = 0;
     p.alive = false;
     p.deaths++;
-    p.respawnTimer = PLAYER.respawn;
     p.lastSurvival = gameTime - p.spawnedAt;
     p.bestSurvival = Math.max(p.bestSurvival, p.lastSurvival);
     p.bestLifeKills = Math.max(p.bestLifeKills, p.lifeKills);
+    p.bestScore = Math.max(p.bestScore, p.score);
+    p.vy = -120;
     pushEvent({ kind: 'death', id: p.id, name: p.name, x: p.x + p.w / 2, y: p.y + p.h / 2 });
+    checkRoundOver();
   }
+}
+
+// ---------------------------------------------------------------------------
+// Rounds: everybody dead => round over => short break => everyone comes back
+// ---------------------------------------------------------------------------
+function ranking() {
+  return [...players.values()]
+    .sort((a, b) => b.score - a.score || b.lastSurvival - a.lastSurvival)
+    .map((p) => ({ id: p.id, name: p.name, outfit: p.outfit, score: p.score, kills: p.kills, survived: Math.round(p.lastSurvival) }));
+}
+
+function checkRoundOver() {
+  if (round.over || players.size === 0) return;
+  for (const p of players.values()) if (p.alive) return;
+  round.over = true;
+  round.restartTimer = ROUND_RESTART;
+  pushEvent({ kind: 'gameover', wave: currentWave(), kills: totalKills, ranking: ranking(), restartIn: ROUND_RESTART });
+}
+
+function startRound() {
+  round.number++;
+  round.over = false;
+  round.startedAt = gameTime;
+  foxes.clear();
+  bullets.clear();
+  totalKills = 0;
+  announcedWave = 1;
+  spawnTimer = 3;
+  for (const p of players.values()) respawnPlayer(p);
+  pushEvent({ kind: 'newround', number: round.number });
+}
+
+function resetWorld() {
+  foxes.clear();
+  bullets.clear();
+  totalKills = 0;
+  announcedWave = 1;
+  spawnTimer = 2;
+  round.over = false;
+  round.restartTimer = 0;
 }
 
 // ---------------------------------------------------------------------------
 // Foxes
 // ---------------------------------------------------------------------------
-function spawnFox() {
+function spawnFox(mega = false) {
   const wave = currentWave();
   const id = nextId++;
   const fromLeft = Math.random() < 0.5;
-  const speed = rand(120, 170) + wave * 10;
+  const size = mega ? MEGA : FOX;
+  const hp = mega ? MEGA.hp + wave * 15 : FOX.hp + Math.floor(wave / 2) * 10;
+  const speed = mega ? rand(95, 120) + wave * 5 : rand(120, 170) + wave * 10;
   foxes.set(id, {
     id,
-    x: fromLeft ? -FOX.w : WORLD.width,
-    y: WORLD.groundY - FOX.h,
+    mega,
+    x: fromLeft ? -size.w : WORLD.width,
+    y: WORLD.groundY - size.h,
     vx: 0,
     vy: 0,
-    w: FOX.w,
-    h: FOX.h,
-    hp: FOX.hp + Math.floor(wave / 2) * 10,
-    maxHp: FOX.hp + Math.floor(wave / 2) * 10,
+    w: size.w,
+    h: size.h,
+    hp,
+    maxHp: hp,
     speed,
+    damage: size.damage,
+    jump: size.jump,
+    biteCooldown: size.biteCooldown,
+    score: size.score,
     facing: fromLeft ? 1 : -1,
     onGround: false,
     biteTimer: rand(0, 0.5),
@@ -317,11 +384,11 @@ function updateFox(fox, dt) {
     // Jump if the player is noticeably above us, or randomly as a lunge.
     if (fox.onGround && fox.jumpTimer <= 0) {
       if (dy < -40 && Math.abs(dx) < 260) {
-        fox.vy = -FOX.jump;
+        fox.vy = -fox.jump;
         fox.jumpTimer = rand(0.6, 1.2);
         pushEvent({ kind: 'foxjump', id: fox.id, x: fox.x + fox.w / 2, y: fox.y + fox.h });
       } else if (Math.abs(dx) < 120 && Math.random() < 0.4) {
-        fox.vy = -FOX.jump * 0.55;
+        fox.vy = -fox.jump * 0.55;
         fox.vx = fox.facing * fox.speed * 1.4;
         fox.jumpTimer = rand(1.0, 2.0);
         pushEvent({ kind: 'foxjump', id: fox.id, x: fox.x + fox.w / 2, y: fox.y + fox.h });
@@ -348,8 +415,8 @@ function updateFox(fox, dt) {
     for (const p of players.values()) {
       if (!p.alive) continue;
       if (overlaps(fox, p)) {
-        fox.biteTimer = FOX.biteCooldown;
-        damagePlayer(p, FOX.damage, fox.x + fox.w / 2);
+        fox.biteTimer = fox.biteCooldown;
+        damagePlayer(p, fox.damage, fox.x + fox.w / 2);
         pushEvent({ kind: 'bite', id: fox.id, x: fox.x + fox.w / 2, y: fox.y });
         break;
       }
@@ -363,11 +430,11 @@ function damageFox(fox, amount, shooter) {
     foxes.delete(fox.id);
     totalKills++;
     if (shooter) {
-      shooter.score += 10;
+      shooter.score += fox.score;
       shooter.kills++;
       shooter.lifeKills++;
     }
-    pushEvent({ kind: 'kill', id: fox.id, x: fox.x + fox.w / 2, y: fox.y + fox.h / 2, by: shooter ? shooter.id : 0 });
+    pushEvent({ kind: 'kill', id: fox.id, x: fox.x + fox.w / 2, y: fox.y + fox.h / 2, by: shooter ? shooter.id : 0, mega: fox.mega, score: fox.score });
   } else {
     pushEvent({ kind: 'hit', id: fox.id, x: fox.x + fox.w / 2, y: fox.y + fox.h / 2 });
   }
@@ -402,22 +469,32 @@ function tick(dt) {
   for (const f of foxes.values()) updateFox(f, dt);
   for (const b of bullets.values()) updateBullet(b, dt);
 
-  // Spawn foxes only while someone is playing.
-  if (players.size > 0) {
-    const wave = currentWave();
-    const maxFoxes = 3 + wave * 2 + players.size * 2;
-    if (wave !== announcedWave) {
-      announcedWave = wave;
-      pushEvent({ kind: 'wave', wave, maxFoxes });
+  if (players.size === 0) {
+    if (foxes.size > 0 || round.over) resetWorld();
+    return;
+  }
+
+  if (round.over) {
+    round.restartTimer -= dt;
+    if (round.restartTimer <= 0) startRound();
+    return;
+  }
+
+  const wave = currentWave();
+  const maxFoxes = 3 + wave * 2 + players.size * 2;
+  if (wave !== announcedWave) {
+    announcedWave = wave;
+    pushEvent({ kind: 'wave', wave, maxFoxes });
+    if (wave % MEGA.every === 0) {
+      const count = Math.ceil(wave / (MEGA.every * 2));
+      for (let i = 0; i < count; i++) spawnFox(true);
+      pushEvent({ kind: 'mega', count, wave });
     }
-    spawnTimer -= dt;
-    if (spawnTimer <= 0 && foxes.size < maxFoxes) {
-      spawnFox();
-      spawnTimer = Math.max(0.9, 3.4 - wave * 0.3) * rand(0.7, 1.3);
-    }
-  } else if (foxes.size > 0) {
-    foxes.clear();
-    bullets.clear();
+  }
+  spawnTimer -= dt;
+  if (spawnTimer <= 0 && foxes.size < maxFoxes) {
+    spawnFox();
+    spawnTimer = Math.max(0.9, 3.4 - wave * 0.3) * rand(0.7, 1.3);
   }
 }
 
@@ -428,6 +505,7 @@ function snapshot() {
     wave: currentWave(),
     kills: totalKills,
     maxFoxes: 3 + currentWave() * 2 + players.size * 2,
+    round: { number: round.number, over: round.over, restartIn: Math.max(0, Math.ceil(round.restartTimer)) },
     players: [...players.values()].map((p) => ({
       id: p.id,
       name: p.name,
@@ -442,16 +520,18 @@ function snapshot() {
       facing: p.facing,
       alive: p.alive,
       onGround: p.onGround,
-      respawn: p.alive ? 0 : Math.ceil(p.respawnTimer),
-      canRespawn: !p.alive && p.respawnTimer <= PLAYER.respawn - 1,
       inv: p.invulnTimer > 0,
       survived: Math.round(p.alive ? gameTime - p.spawnedAt : p.lastSurvival || 0),
       lifeKills: p.lifeKills,
       best: Math.round(p.bestSurvival),
       bestKills: p.bestLifeKills,
+      bestScore: p.bestScore,
     })),
     foxes: [...foxes.values()].map((f) => ({
       id: f.id,
+      mega: f.mega,
+      w: f.w,
+      h: f.h,
       x: Math.round(f.x * 10) / 10,
       y: Math.round(f.y * 10) / 10,
       vx: Math.round(f.vx),
@@ -530,7 +610,7 @@ wss.on('connection', (ws) => {
           consts: { PLAYER, FOX, BULLET },
         })
       );
-      pushEvent({ kind: 'join', id: player.id, name: player.name });
+      pushEvent({ kind: 'join', id: player.id, name: player.name, ghost: !player.alive });
       console.log(`+ ${player.name} (#${player.id}) joined, ${players.size} online`);
       return;
     }
@@ -542,9 +622,7 @@ wss.on('connection', (ws) => {
       player.input.right = !!msg.right;
       player.input.jump = !!msg.jump;
       player.input.shoot = !!msg.shoot;
-    } else if (msg.t === 'respawn') {
-      // Quick return: allowed once at least a second of the respawn timer has elapsed.
-      if (!player.alive && player.respawnTimer <= PLAYER.respawn - 1) respawnPlayer(player);
+      player.input.down = !!msg.down;
     } else if (msg.t === 'ping') {
       ws.send(JSON.stringify({ t: 'pong', ts: msg.ts }));
     }
@@ -554,6 +632,7 @@ wss.on('connection', (ws) => {
     if (!player) return;
     players.delete(player.id);
     pushEvent({ kind: 'leave', id: player.id, name: player.name });
+    checkRoundOver();
     console.log(`- ${player.name} (#${player.id}) left, ${players.size} online`);
   });
 });

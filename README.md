@@ -21,17 +21,23 @@ a hrajete spolu.
 | ------- | ---------------------------------------- |
 | Pohyb   | `A`/`D` nebo `←`/`→`                     |
 | Skok    | `W`, `↑` nebo `Space`                    |
-| Střelba | `Ctrl`, `F`, `X` nebo levé tlačítko myši |
+| Střelba | `Ctrl`, `F` nebo `X`                     |
+| Duch    | `W`/`↑` nahoru, `S`/`↓` dolů             |
 
-Na dotykových zařízeních se zobrazí tlačítka na obrazovce. Po smrti stačí
-`Space`, `Enter` nebo klik pro rychlý návrat (po první sekundě).
+Na dotykových zařízeních se zobrazí tlačítka na obrazovce. Duchové létají
+pomocí `W`/`S` (nahoru/dolů) a `A`/`D`.
 
 ## Pravidla
 
 - Liška ubere kousnutím 12 HP, hráč má 100 HP.
 - Liška má 30 HP, střela ubírá 10 → tři zásahy. Zabití = **+10 bodů**.
 - Každých 12 ulovených lišek roste vlna: lišek je víc, jsou rychlejší a odolnější.
-- Po smrti se hráč za 3 s znovu objeví uprostřed lesa s krátkou nesmrtelností.
+- Kdo umře, zůstane mrtvý až do konce kola. Poletuje jako duch, vidí hru a
+  může fandit, ale nestřílí a lišky si ho nevšímají.
+- Když padnou všichni, kolo končí: zobrazí se pořadí a za 12 s začne nové kolo
+  od vlny 1. Kdo se připojí během přestávky, čeká jako duch.
+- Každou třetí vlnu přijde **mega liška** (dvojnásobná, 150+ HP, kousne za 30,
+  za 50 bodů). Od vlny 9 přicházejí dvě, od vlny 15 tři.
 - Dřevěné plošiny jsou průchozí zespodu (jde na ně vyskočit).
 - Každý hráč má jiný outfit: první v lese dostane mysliveckou zelenou, další
   nejnižší volnou paletu z osmi. Outfit jde vybrat i ručně na úvodní obrazovce.
@@ -59,8 +65,14 @@ Na dotykových zařízeních se zobrazí tlačítka na obrazovce. Po smrti stač
 
 ## Protokol
 
-Klient → server: `{t:'join', name, outfit?}`, `{t:'input', left, right, jump, shoot}`, `{t:'respawn'}`, `{t:'ping', ts}`
+Klient → server: `{t:'join', name, outfit?}`, `{t:'input', left, right, jump, down, shoot}`, `{t:'ping', ts}`
 
-Server → klient: `{t:'welcome', id, world, platforms}`, `{t:'state', players, foxes, bullets, events, wave, kills, maxFoxes}`, `{t:'pong', ts}`
+Server → klient: `{t:'welcome', id, world, platforms}`, `{t:'state', players, foxes, bullets, events, wave, kills, maxFoxes, round}`, `{t:'pong', ts}`
 
-Události ve `state.events`: `shoot`, `hit`, `kill`, `hurt`, `bite`, `death`, `respawn`, `jump`, `foxjump`, `wave`, `join`, `leave`.
+Události ve `state.events`: `shoot`, `hit`, `kill` (s `mega`, `score`), `hurt`, `bite`, `death`, `respawn`, `jump`, `foxjump`, `wave`, `mega`, `gameover`, `newround`, `join`, `leave`.
+
+## Vykreslování
+
+Klient kreslí v logickém rozlišení 960×540, ale backing store canvasu se
+přizpůsobuje skutečné velikosti na obrazovce krát `devicePixelRatio`, takže
+je obraz ostrý i na velkém nebo HiDPI monitoru.
