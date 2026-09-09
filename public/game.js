@@ -711,6 +711,13 @@ if (document.fonts && document.fonts.load) {
 // ===========================================================================
 // Effects & events
 // ===========================================================================
+// Haptics on phones; a no-op elsewhere.
+function buzz(pattern) {
+  try {
+    if (navigator.vibrate && document.body.classList.contains('touch')) navigator.vibrate(pattern);
+  } catch {}
+}
+
 function playerName(id) {
   const p = currSnap && currSnap.data.players.find((pl) => pl.id === id);
   return p ? p.name : '?';
@@ -908,6 +915,7 @@ function handleEvents(events) {
           shake = 10;
           hurtFlash = 1;
           SFX.hurt();
+          buzz(60);
         }
         break;
       case 'bite':
@@ -926,6 +934,7 @@ function handleEvents(events) {
           hurtFlash = 1;
           ghostHint = 7;
           SFX.death();
+          buzz([120, 60, 160]);
         }
         break;
       case 'respawn':
