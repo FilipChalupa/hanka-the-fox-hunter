@@ -43,6 +43,7 @@ const DEN = { hp: 80, collapseTime: 12, regen: 3 };
 const WEATHER = { duration: 20, gap: [35, 60], kinds: ['fog', 'rain', 'storm'], lightning: [2.5, 5.5], lightningDamage: 25 };
 const MUSHROOM_BOX = (d) => ({ x: d.x - 8, y: WORLD.groundY - 26, w: 16, h: 26 });
 const STUMP_HALF = 24;
+const FOX_AI = { giveUpAfter: 2.5, roamMove: [1.5, 3.5], roamPause: [0.8, 2.0] };
 const ROUND_RESTART = 12;
 
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -433,6 +434,7 @@ class Game {
       facing: -den.side, onGround: false,
       biteTimer: rand(0.3, 0.8), jumpTimer: rand(0.3, 1.2), wanderDir: -den.side, wanderTimer: 0, fireTick: 0,
       dug: kind === 'digger', digTimer: kind === 'digger' ? 0 : rand(3, 6), stun: 0,
+      bestDist: Infinity, stuckT: 0, roam: null,
     };
     this.foxes.set(id, fox);
     this.push({ kind: 'foxspawn', id, den: den.id, x: fox.x + fox.w / 2, y: fox.y + fox.h, foxKind: kind });
@@ -521,7 +523,46 @@ class Game {
       }
     }
 
-    if (target) {
+    // Frustration: a fox that cannot get closer to its target for a while gives up,
+    // roams somewhere else (with the odd pause) and only then comes back to harass.
+    if (target && !fox.roam) {
+      const dist = Math.abs(target.x + target.w / 2 - fcx) + Math.max(0, (fox.y + fox.h) - (target.y + target.h)) * 0.5;
+      if (dist < fox.bestDist - 6) {
+        fox.bestDist = dist;
+        fox.stuckT = 0;
+      } else fox.stuckT += dt;
+      if (fox.stuckT > FOX_AI.giveUpAfter && !fox.mega) {
+        fox.roam = this.planRoam(fox, target);
+        this.push({ kind: 'foxgiveup', id: fox.id, x: fcx, y: fox.y });
+      }
+    }
+    if (fox.roam) {
+      const step = fox.roam.steps[0];
+      step.t -= dt;
+      if (step.t <= 0) {
+        fox.roam.steps.shift();
+        if (!fox.roam.steps.length) {
+          fox.roam = null;
+          fox.bestDist = Infinity;
+          fox.stuckT = 0;
+        }
+      }
+      if (fox.roam) {
+        const cur = fox.roam.steps[0];
+        fox.vx = cur.dir * fox.speed * (cur.dir ? 0.6 : 0);
+        if (cur.dir) fox.facing = cur.dir;
+        // Bounce off the edges of the world
+        if ((fox.x <= 2 && fox.vx < 0) || (fox.x + fox.w >= WORLD.width - 2 && fox.vx > 0)) cur.dir = -cur.dir;
+        // If the target came down to our level, drop the sulking and chase again
+        if (target && Math.abs(target.y + target.h - (fox.y + fox.h)) < 40 && Math.abs(target.x - fox.x) < 300) {
+          fox.roam = null;
+          fox.bestDist = Infinity;
+          fox.stuckT = 0;
+        }
+      }
+    }
+
+    if (target && !fox.roam) {
       const tcx = target.x + target.w / 2;
       const dx = tcx - fcx;
       const dy = target.y + target.h - (fox.y + fox.h);
@@ -548,7 +589,7 @@ class Game {
           this.push({ kind: 'foxjump', id: fox.id, x: fcx, y: fox.y + fox.h });
         }
       }
-    } else {
+    } else if (!fox.roam) {
       fox.wanderTimer -= dt;
       if (fox.wanderTimer <= 0) {
         fox.wanderDir = Math.random() < 0.5 ? -1 : 1;
@@ -578,6 +619,16 @@ class Game {
         }
       }
     }
+  }
+
+  planRoam(fox, target) {
+    // Walk away from the target for a bit, stop and sniff around, maybe walk some more.
+    const away = target ? (fox.x + fox.w / 2 < target.x + target.w / 2 ? -1 : 1) : Math.random() < 0.5 ? -1 : 1;
+    const dir = Math.random() < 0.75 ? away : -away;
+    const steps = [{ dir, t: rand(FOX_AI.roamMove[0], FOX_AI.roamMove[1]) }];
+    if (Math.random() < 0.7) steps.push({ dir: 0, t: rand(FOX_AI.roamPause[0], FOX_AI.roamPause[1]) });
+    if (Math.random() < 0.5) steps.push({ dir: Math.random() < 0.5 ? -1 : 1, t: rand(0.8, 2) });
+    return { steps };
   }
 
   dropPickup(x, y) {
@@ -889,7 +940,7 @@ class Game {
       foxes: [...this.foxes.values()].map((f) => ({
         id: f.id, kind: f.kind, mega: f.mega, w: f.w, h: f.h, dug: f.dug || false, stun: f.stun > 0,
         x: Math.round(f.x * 10) / 10, y: Math.round(f.y * 10) / 10, vx: Math.round(f.vx),
-        hp: f.hp, maxHp: f.maxHp, facing: f.facing, onGround: f.onGround,
+        hp: f.hp, maxHp: f.maxHp, facing: f.facing, onGround: f.onGround, roam: !!f.roam,
       })),
       bullets: [...this.bullets.values()].map((b) => ({ id: b.id, x: Math.round(b.x), y: Math.round(b.y), dir: Math.sign(b.vx) })),
       pickups: [...this.pickups.values()].map((pk) => ({ id: pk.id, kind: pk.kind, x: pk.x, y: pk.y, life: Math.round(pk.life) })),

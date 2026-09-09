@@ -192,6 +192,30 @@ test('hunters can climb a marked trunk and step onto its canopy', () => {
   assert.ok(fox.y + fox.h > trunk.top + 100);
 });
 
+test('a fox that cannot reach a hunter up a tree gives up for a while, then returns', () => {
+  const game = mk();
+  const a = game.addPlayer({ name: 'A' });
+  const trunk = game.world.trunks[1];
+  place(a, trunk.x - PLAYER.w / 2, trunk.top - PLAYER.h);
+  const fox = game.spawnFox('normal');
+  fox.x = trunk.x + 40;
+  fox.y = WORLD.groundY - fox.h;
+  let farthest = 0;
+  let gaveUp = false;
+  let cameBack = false;
+  for (let t = 0; t < 14; t += 1 / 60) {
+    game.tick(1 / 60);
+    for (const e of game.takeEvents()) if (e.kind === 'foxgiveup' && e.id === fox.id) gaveUp = true;
+    const d = Math.abs(fox.x + fox.w / 2 - trunk.x);
+    farthest = Math.max(farthest, d);
+    if (gaveUp && !fox.roam && d < 60) cameBack = true;
+  }
+  assert.ok(gaveUp, 'fox gave up');
+  assert.ok(farthest > 90, `fox wandered off: ${farthest}`);
+  assert.ok(cameBack, 'fox came back to harass again');
+  assert.ok(fox.y + fox.h > trunk.top + 100, 'still on the ground');
+});
+
 test('a bullet bursts a mushroom and shakes leaves off a trunk', () => {
   const game = mk();
   const a = game.addPlayer({ name: 'A' });

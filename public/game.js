@@ -810,6 +810,9 @@ function handleEvents(events) {
       case 'foxjump':
         dust(ev.x, ev.y, 3);
         break;
+      case 'foxgiveup':
+        floatingTexts.push({ x: ev.x, y: ev.y - 6, text: '…?', color: '#ffd9b3', life: 1.2, size: 13 });
+        break;
       case 'foxspawn':
         burst(ev.x, ev.y, 8, { colors: ['#3b2a1a', '#5a3a1f'], minSpeed: 20, maxSpeed: 90, life: 0.5, up: 60, size: 4 });
         break;
@@ -1777,11 +1780,12 @@ function drawFox(g, f, x, y, time) {
   const scale = w / 46;
   const moving = Math.abs(f.vx) > 10 && f.onGround;
   const run = moving ? Math.sin(time * (f.mega ? 11 : 18) + f.id) : f.onGround ? 0 : 0.8;
+  const sniff = f.roam && !moving ? Math.sin(time * 5 + f.id) * 0.06 : 0;
   drawShadow(g, f.rx, w, f.ry + h);
   g.save();
   g.translate(x + w / 2, y + h);
   g.scale(1 + a.squash * 0.15, 1 - a.squash * 0.2);
-  drawFoxSprite(g, { facing: f.facing, run, air: !f.onGround, bite: a.bite > 0 ? Math.sin((a.bite / 0.25) * Math.PI) : 0, hurt: a.hurt > 0, mega: f.mega, scale, time, kind: f.kind });
+  drawFoxSprite(g, { facing: f.facing, run, air: !f.onGround, bite: a.bite > 0 ? Math.sin((a.bite / 0.25) * Math.PI) : 0, hurt: a.hurt > 0, mega: f.mega, scale, time, kind: f.kind, rot: sniff });
   g.restore();
   if (f.stun) {
     g.fillStyle = '#ffe066';
