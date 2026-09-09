@@ -40,6 +40,7 @@ a hrajete spolu.
 | Oživení | drž `E` vedle ducha (3 s, nehýbat se, nestřílet) |
 | Úhyb    | dvojité `A`/`D` (krátký sprint s nezranitelností, cooldown 1 s) |
 | Lezení  | drž `W` ve výskoku u světlého kmene, `S` u paty kmene; `W`/`S` leze, skok do strany seskočí |
+| Propad  | `S`/`↓` na plošině propadne skrz ni dolů |
 | Použít  | `Q` (past, roh, semínko, světluška, vnadidlo) |
 | Emoty   | `1` 👍, `2` 🆘, `3` 😂, `4` ❤️            |
 | Duch    | `W`/`↑` nahoru, `S`/`↓` dolů             |

@@ -212,22 +212,22 @@
     if (dir !== 0) p.facing = dir;
 
     p.dropT = Math.max(0, (p.dropT || 0) - dt);
-    if (inp.jump && !p.jumpHeld && p.onGround) {
-      const under = inp.down ? platformUnder(world.platforms, p) : null;
-      if (under) {
-        // Down + jump on a one-way platform: drop through it instead of jumping
-        p.dropT = 0.3;
-        p.dropY = under.y;
-        p.y += 3;
-        p.vy = 120;
-        p.onGround = false;
-        out.push('drop');
-      } else {
-        p.vy = -PLAYER.jump;
-        p.onGround = false;
-        p.jumpTime = 0;
-        out.push('jump');
-      }
+    // Pressing down on a one-way platform drops through it (a trunk at your feet takes priority: that climbs).
+    const downPressed = inp.down && !p.downHeld;
+    p.downHeld = inp.down;
+    const under = p.onGround && downPressed && !trunk ? platformUnder(world.platforms, p) : null;
+    if (under) {
+      p.dropT = 0.3;
+      p.dropY = under.y;
+      p.y += 3;
+      p.vy = 120;
+      p.onGround = false;
+      out.push('drop');
+    } else if (inp.jump && !p.jumpHeld && p.onGround) {
+      p.vy = -PLAYER.jump;
+      p.onGround = false;
+      p.jumpTime = 0;
+      out.push('jump');
     }
     p.jumpTime = inp.jump ? (p.jumpTime || 0) + dt : 0;
     p.jumpHeld = inp.jump;

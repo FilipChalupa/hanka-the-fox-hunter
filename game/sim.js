@@ -1225,7 +1225,7 @@ class Game {
         hp: p.hp, score: p.score, kills: p.kills, deaths: p.deaths,
         facing: p.facing, alive: p.alive, onGround: p.onGround, climbing: p.climbing, dash: p.dashT > 0, inv: p.invulnTimer > 0,
         dashCd: Math.round(p.dashCd * 100) / 100, jumpHeld: p.jumpHeld, jumpTime: Math.round(p.jumpTime * 100) / 100, dashDir: p.dashDir,
-      dropT: Math.round((p.dropT || 0) * 100) / 100, dropY: p.dropY || 0,
+      dropT: Math.round((p.dropT || 0) * 100) / 100, dropY: p.dropY || 0, downHeld: !!p.downHeld,
         seq: p.seq,
         weapon: p.weapon, weaponT: Math.ceil(p.weaponTimer), speedT: Math.ceil(p.speedTimer), stinkT: Math.ceil(p.stinkTimer),
       incT: Math.ceil(p.incTimer), doubleT: Math.ceil(p.doubleTimer), disguiseT: Math.ceil(p.disguiseTimer), item: p.item,

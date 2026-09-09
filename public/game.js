@@ -634,7 +634,7 @@ function reconcile(data) {
     x: me.x, y: me.y, vx: me.vx, vy: me.vy || 0, onGround: me.onGround, climbing: me.climbing, alive: me.alive,
     dashT: me.dash ? Math.max(pred.dashT, 0.05) : 0, dashDir: me.dashDir || pred.dashDir, dashCd: me.dashCd || 0,
     jumpHeld: me.jumpHeld, jumpTime: me.jumpTime || 0, facing: me.facing, speedBoost: me.speedT > 0,
-    dropT: me.dropT || 0, dropY: me.dropY || 0,
+    dropT: me.dropT || 0, dropY: me.dropY || 0, downHeld: !!me.downHeld,
   });
   // Drop acknowledged inputs, replay the rest on top of the server state.
   while (inputHistory.length && inputHistory[0].seq <= me.seq) inputHistory.shift();
