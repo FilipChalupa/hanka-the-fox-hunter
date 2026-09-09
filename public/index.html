@@ -89,6 +89,42 @@
     @keyframes tilt { 0%, 100% { transform: rotate(0); } 50% { transform: rotate(-90deg); } }
     @media (orientation: portrait) and (pointer: coarse) { #rotate { display: flex; } }
 
+    #menuBtn {
+      position: fixed; top: max(8px, env(safe-area-inset-top)); right: calc(max(8px, env(safe-area-inset-right)) + 44px);
+      width: 34px; height: 34px; border-radius: 8px;
+      border: 2px solid rgba(242, 165, 65, 0.6); background: rgba(20, 12, 5, 0.55);
+      font-size: 1rem; cursor: pointer; z-index: 6; opacity: 0.7;
+    }
+    #menuBtn:hover { opacity: 1; }
+    #menu[hidden] { display: none; }
+    #menu {
+      position: fixed; inset: 0; z-index: 30;
+      background: rgba(4, 10, 6, 0.8);
+      display: flex; align-items: center; justify-content: center;
+      overflow: auto;
+    }
+    .menu-card {
+      background: linear-gradient(180deg, #6a4526 0%, #4c3018 55%, #3c2410 100%);
+      border: 3px solid #2b1708; border-radius: 14px;
+      padding: 18px 24px; width: min(94vw, 460px); margin: 12px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.7);
+      font-size: 0.9rem;
+    }
+    .menu-card h2 { margin: 0 0 10px; font-family: var(--title); color: var(--accent); font-size: 1.4rem; }
+    .menu-card h3 { margin: 14px 0 6px; font-family: var(--title); color: var(--accent); font-size: 1rem; }
+    .menu-card label { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 8px 0; }
+    .menu-card label.check { justify-content: flex-start; }
+    .menu-card input[type="range"] { flex: 1; max-width: 240px; accent-color: var(--accent); }
+    .menu-card select { font-family: var(--body); font-weight: 700; padding: 4px 6px; border-radius: 6px; border: 2px solid #2b1708; background: #f3ecd8; color: #2b1708; }
+    .keyrow { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; margin: 4px 0; }
+    .keyrow code { background: #f3ecd8; color: #2b1708; border-radius: 4px; padding: 2px 8px; font-weight: 800; min-width: 90px; text-align: center; }
+    .keyrow button, .menu-actions button {
+      font-family: var(--body); font-weight: 800; padding: 5px 10px; border-radius: 6px;
+      border: 2px solid #2b1708; background: rgba(0,0,0,0.25); color: var(--text); cursor: pointer;
+    }
+    .menu-actions { display: flex; justify-content: space-between; gap: 10px; margin-top: 14px; }
+    .menu-actions .primary { background: linear-gradient(180deg, #ffc35c, #e08b1f); color: #2b1708; }
+
     /* ---------- Start screen ---------- */
     #overlay {
       position: fixed;
@@ -228,6 +264,9 @@
     }
     .invite:hover { background: rgba(242,165,65,0.25); }
     .invite.done { background: rgba(127,224,168,0.3); border-color: #7fe0a8; }
+    .invite-row { display: flex; gap: 6px; margin-top: 4px; }
+    .invite-row .invite { margin-top: 0; flex: 1; }
+    .invite-row .share { width: 46px; flex: none; font-size: 1rem; padding: 6px; }
     .board {
       display: flex; gap: 8px; margin-top: 12px;
       background: rgba(0,0,0,0.28); border-radius: 8px; padding: 8px 10px;
@@ -320,6 +359,28 @@
 <body>
   <div id="wrap"><canvas id="game" width="960" height="540"></canvas></div>
   <div id="rotate"><span>📱</span>Otoč telefon na šířku, les je široký.</div>
+  <button id="menuBtn" type="button" title="Nastavení (Esc)">⚙️</button>
+  <div id="menu" hidden>
+    <div class="menu-card">
+      <h2>Nastavení</h2>
+      <label>Efekty <input id="setSfx" type="range" min="0" max="1" step="0.05" /></label>
+      <label>Hudba <input id="setMusic" type="range" min="0" max="1" step="0.05" /></label>
+      <label class="check"><input id="setShake" type="checkbox" /> Otřesy kamery</label>
+      <label class="check"><input id="setFlashes" type="checkbox" /> Záblesky blesků</label>
+      <label>Velikost HUD
+        <select id="setHud"><option value="0.85">Menší</option><option value="1">Normální</option><option value="1.2">Větší</option></select>
+      </label>
+      <label>Grafika
+        <select id="setQuality"><option value="auto">Automaticky</option><option value="high">Plná</option><option value="low">Jednoduchá (slabší telefony)</option></select>
+      </label>
+      <h3>Klávesy</h3>
+      <div id="keys"></div>
+      <div class="menu-actions">
+        <button id="keysReset" type="button">Výchozí klávesy</button>
+        <button id="menuClose" type="button" class="primary">Zpět do hry (Esc)</button>
+      </div>
+    </div>
+  </div>
   <button id="fs" type="button" title="Celá obrazovka (F11). V celé obrazovce Chrome nezavře kartu na Ctrl+W.">⛶</button>
 
   <div id="touch">
@@ -363,7 +424,10 @@
 
       <button id="play" class="play">Do lesa!</button>
       <div id="status"></div>
-      <button id="invite" class="invite" type="button">🔗 Pozvat kamarády (zkopírovat odkaz)</button>
+      <div class="invite-row">
+        <button id="invite" class="invite" type="button">🔗 Pozvat kamarády (zkopírovat odkaz)</button>
+        <button id="share" class="invite share" type="button" title="Sdílet odkaz" hidden>📤</button>
+      </div>
 
       <div id="board" class="board" hidden>
         <div class="col"><h3>Nejlepší kolo</h3><ol id="boardScore"></ol></div>
@@ -373,7 +437,7 @@
 
       <div class="controls">
         <kbd>A</kbd>/<kbd>D</kbd> pohyb · <kbd>W</kbd>/<kbd>Space</kbd> skok · <kbd>Shift</kbd>/<kbd>F</kbd>/<kbd>X</kbd>/<kbd>J</kbd>/<kbd>K</kbd> střelba<br />
-        <kbd>E</kbd> drž u ducha 3 s = oživení (10 HP) · <kbd>A A</kbd>/<kbd>D D</kbd> úhyb · <kbd>Q</kbd> použít předmět<br />
+        <kbd>E</kbd> drž u ducha 3 s = oživení (10 HP) · <kbd>A A</kbd>/<kbd>D D</kbd> úhyb · <kbd>Q</kbd> použít, drž <kbd>Q</kbd> = hodit · <kbd>Esc</kbd> nastavení<br />
         Světlé kmeny jde lézt: drž <kbd>W</kbd> ve výskoku · <kbd>1</kbd>–<kbd>4</kbd> emoty · <kbd>M</kbd> zvuk · kulky zraní i kamarády
       </div>
     </div>

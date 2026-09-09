@@ -388,7 +388,7 @@ test('incendiary rounds set the ground on fire where they land', () => {
   place(a, 1000);
   a.facing = 1;
   give(game, a, 'incendiary');
-  assert.ok(a.incTimer > 9);
+  assert.equal(a.incAmmo, 10);
   game.setInput(a.id, input({ shoot: true }));
   const events = run(game, 1.2);
   assert.ok(events.some((e) => e.kind === 'ignite'), 'ignite event');
@@ -688,4 +688,25 @@ test('a sideways press lets go of the trunk', () => {
   run(game, 0.1);
   assert.equal(a.climbing, false, 'let go');
   assert.ok(a.vx > 0 || a.x > trunk.x - PLAYER.w / 2 + 3, 'stepped off to the side');
+});
+
+test('special guns are limited by shots, not time, and hand the rifle back when empty', () => {
+  const game = mk();
+  const a = game.addPlayer({ name: 'A' });
+  place(a, 1000);
+  give(game, a, 'shotgun');
+  assert.equal(a.weapon, 'shotgun');
+  assert.equal(a.ammo, 12);
+  game.setInput(a.id, input({ shoot: true }));
+  const events = run(game, 12 * 0.28 + 0.5);
+  assert.equal(events.filter((e) => e.kind === 'shoot' && e.weapon === 'shotgun').length, 12, 'exactly twelve shells');
+  assert.ok(events.some((e) => e.kind === 'ammoout' && e.weapon === 'shotgun'));
+  assert.equal(a.weapon, 'rifle');
+  assert.ok(events.some((e) => e.kind === 'shoot' && e.weapon === 'rifle'), 'keeps shooting with the rifle');
+  game.setInput(a.id, input({}));
+  give(game, a, 'incendiary');
+  game.setInput(a.id, input({ shoot: true }));
+  const ev2 = run(game, 3.5);
+  assert.equal(ev2.filter((e) => e.kind === 'shoot' && e.fire).length, 10, 'ten incendiary shots');
+  assert.equal(a.incAmmo, 0);
 });

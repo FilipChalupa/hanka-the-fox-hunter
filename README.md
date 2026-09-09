@@ -41,7 +41,8 @@ a hrajete spolu.
 | Úhyb    | dvojité `A`/`D` (krátký sprint s nezranitelností, cooldown 1 s) |
 | Lezení  | drž `W` ve výskoku u světlého kmene, `S` u paty kmene; `W`/`S` leze, skok do strany seskočí |
 | Propad  | `S`/`↓` na plošině propadne skrz ni dolů |
-| Použít  | `Q` (past, roh, semínko, světluška, vnadidlo) |
+| Použít  | `Q` (past, roh, semínko, světluška, vnadidlo); podržet `Q` = hodit předmět kamarádovi |
+| Menu    | `Esc`: hlasitost efektů a hudby, otřesy, blesky, velikost HUD, kvalita grafiky, klávesy |
 | Emoty   | `1` 👍, `2` 🆘, `3` 😂, `4` ❤️            |
 | Zvuk    | `M` vypne/zapne všechny zvuky včetně hudby (pamatuje se) |
 | Duch    | `W`/`↑` nahoru, `S`/`↓` dolů             |
@@ -69,13 +70,13 @@ nahoře řada emotů.
 - **Oživení**: duch přiletí k živému lovci, ten se postaví, drží `E` a 3 s se
   nehýbe ani nestřílí. Duch se vrátí s 10 HP, oživující dostane 15 bodů.
 - **Vylepšení** padají z lišek (8 %, z mega lišky 60 %) a občas se objeví na
-  plošinách: lékárnička (+40 HP), brokovnice (3 broky po 9, skoro stejná
-  kadence jako puška, 12 s), smrad (10 s: lišky do 190 px se otočí a utíkají
-  pryč, hrabavé se odplazí, mega liška si ho nevšímá), zápalné náboje (10 s:
-  kulky padají k zemi a kde dopadnou nebo koho trefí, tam vzplane oheň, pálí i
-  kamarády), dvojité body (15 s), liščí převlek (8 s: lišky tě ignorují, ale
-  nemůžeš střílet), rychlopalba
-  (10 s), rychlé nohy (12 s).
+  plošinách: lékárnička (+40 HP), brokovnice (12 ran po 3 brocích za 9),
+  rychlopalba (40 ran), zápalné náboje (10 nábojů, které padají k zemi a kde
+  dopadnou nebo koho trefí, tam vzplane oheň, pálí i kamarády), smrad (10 s:
+  lišky do 190 px se otočí a utíkají pryč, hrabavé se odplazí, mega liška si
+  ho nevšímá), dvojité body (15 s), liščí převlek (8 s: lišky tě ignorují, ale
+  nemůžeš střílet), rychlé nohy (12 s). Zbraně jsou omezené počtem ran, ne
+  časem; když dojdou, vrátí se puška. Stejná zbraň znovu náboje doplní.
 - **Držené předměty** se sbírají do ruky a používají klávesou `Q` (na mobilu
   tlačítko „použít“): past (položí se na zem, první liška se chytí na 3 s a
   nemůže kousat, musíš ji dojít dorazit), lovecký roh (všechny lišky na mapě
@@ -105,6 +106,19 @@ nahoře řada emotů.
   se ukazují i statistiky napříč koly (lišky / oživení / teamkilly).
 - **Rekonexe**: server drží tělo hráče 60 s po výpadku, klient se s tokenem
   z localStorage připojí zpět ke stejnému hráči i skóre.
+- **Liščí matka**: ve vlně 10 vyleze z nory boss. V první fázi bojuje sama a
+  jiné lišky nepřicházejí; pod polovinou HP zavyje a každých 6 s přivolá tři
+  lišky z nor. Dopad po skoku omráčí lovce na zemi do 170 px za 15. Nevšímá si
+  smradu, návnad ani pastí. Její porážka kolo vyhraje: tým dostane odznak, les
+  se vygeneruje znovu.
+- **Odemykání bedýnek**: druhy vylepšení přibývají s vlnou (1: lékárnička,
+  brokovnice; 2: rychlopalba, rychlé nohy; 3: smrad, past, vnadidlo; 4: zápalné
+  náboje, roh, prokletí; 5: dvojité body, světluška; 6: převlek, semínko).
+  Oznámení vlny vypíše, co je nově k mání.
+- **Týmové odznaky** na konci kola: Liščí matka poražena, Nikdo neumřel do
+  vlny 5, Zavaleny obě nory najednou, Tři oživení v jednom kole.
+- **Oživený** má 3 s nesmrtelnosti a blikající rámeček HP, dokud se neuzdraví
+  na 40 HP nebo nesebere lékárničku.
 - Dřevěné plošiny jsou průchozí zespodu (jde na ně vyskočit).
 - Každý hráč má jiný outfit: první v lese dostane mysliveckou zelenou, další
   nejnižší volnou paletu z osmi. Outfit jde vybrat i ručně na úvodní obrazovce.
@@ -138,8 +152,11 @@ nahoře řada emotů.
 - `public/index.html` – úvodní obrazovka se žebříčkem a dotykové ovládání.
 - `public/game.js` – vykreslování na Canvas, predikce vlastního pohybu s
   replayem vstupů, interpolace ostatních, částice, počasí, zvuky.
-- `test/sim.test.js` – scénářové testy (oživení, střet střel, nora, úhyb,
-  lezení, houby a listí, pařez, konec kola, rekonexe, delta snapshoty, blesky).
+- `test/sim.test.js` – scénářové testy simulace (`npm test`, přes 35 scénářů).
+- `test/e2e.test.js` – Playwright: skutečný server a dva prohlížeče, ověří
+  načtení, protokol, predikci, vzájemnou viditelnost, střelbu, menu a reload
+  při změně verze protokolu (`npm run test:e2e`, jednou předtím
+  `npx playwright install chromium`).
 
 ## Protokol
 
@@ -148,6 +165,21 @@ Klient → server: `{t:'join', name, outfit?, token?}`, `{t:'input', left, right
 Server → klient: `{t:'welcome', id, token, world, rejoined}`, `{t:'state', …}` (plný snapshot), `{t:'delta', …}` (jen změněné entity a pole; klient je skládá přes `Shared.applyDelta`), `{t:'pong', ts}`
 
 Události ve `state.events`: `shoot`, `hit`, `kill`, `hurt`, `bite`, `death`, `respawn`, `revived`, `ff`, `clash`, `pickup`, `emote`, `dig`, `emerge` (s `blocked` u pařezu), `jump`, `dash`, `grab`, `foxjump`, `foxspawn`, `denhit`, `dencollapse`, `denopen`, `leaves`, `mushroom`, `weather`, `lightning`, `wave`, `mega`, `gameover` (s `ranking` včetně `badges` a statistik), `newround` (s novým `world`), `join`, `leave`, `away`, `back`.
+
+## Provoz
+
+- `/metrics` vrací metriky ve formátu Prometheus: hráči online, lišky, vlna,
+  kolo, doba ticku (průměr a maximum), velikost plných a delta snapshotů,
+  počet snapshotů, dokončená a vyhraná kola, uptime, verze protokolu.
+- `/api/status` totéž zkráceně v JSON, `/healthz` pro health check.
+- `welcome` nese verzi protokolu (`Shared.PROTOCOL`). Klient se starým skriptem
+  se jednou sám znovu načte s parametrem `v`. Skripty a HTML se servírují
+  s `no-cache`, ikony a obrázky s dlouhou platností.
+- Klient interpoluje ostatní entity podle času serveru se zpožděním, které se
+  přizpůsobuje jitteru (60–260 ms), takže při horší lince nedochází k trhání.
+  Vlastní lovec se předvídá lokálně.
+- Nastavení „Grafika: automaticky“ přepne na jednodušší vykreslování (méně
+  částic, bez osvětlení a mlhy), když FPS spadne pod 40 na 4 s.
 
 ## Vykreslování
 

@@ -5,7 +5,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test"
+    "test": "node --test test/sim.test.js",
+    "test:e2e": "node --test test/e2e.test.js",
+    "test:all": "node --test test/sim.test.js test/e2e.test.js"
   },
   "license": "MIT",
   "dependencies": {

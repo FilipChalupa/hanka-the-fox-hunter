@@ -31,10 +31,11 @@ const BOSS = { wave: 10, hpPerPlayer: 150, howlEvery: 6, howlCount: 3, stompRadi
 // Bullets leave the muzzle at rifle height and are drawn there; their hitbox reaches 22 px
 // below that, so a shot fired from the hip still catches the small fast fox on flat ground.
 const BULLET = { speed: 1000, life: 1.1, w: 10, h: 22 };
+// Special weapons carry a limited number of shots; the rifle never runs out.
 const WEAPONS = {
   rifle:   { cooldown: 0.22, damage: 10, pellets: 1, spread: 0 },
-  shotgun: { cooldown: 0.28, damage: 9, pellets: 3, spread: 140, duration: 12 },
-  rapid:   { cooldown: 0.08, damage: 7, pellets: 1, spread: 0, duration: 10 },
+  shotgun: { cooldown: 0.28, damage: 9, pellets: 3, spread: 140, ammo: 12 },
+  rapid:   { cooldown: 0.08, damage: 7, pellets: 1, spread: 0, ammo: 40 },
 };
 // Pickups. `held` items go to the hunter's hand and are placed/used with the use key.
 // `minWave` unlocks kinds as the round progresses, so there is something new to find later on.
@@ -46,7 +47,7 @@ const PICKUPS = {
   stink: { weight: 2, duration: 10, minWave: 3 },
   trap: { weight: 3, held: true, minWave: 3 },
   bait: { weight: 3, held: true, minWave: 3 },
-  incendiary: { weight: 2, duration: 10, minWave: 4 },
+  incendiary: { weight: 2, ammo: 10, minWave: 4 },
   horn: { weight: 2, held: true, minWave: 4 },
   curse: { weight: 2, minWave: 4 },
   double: { weight: 2, duration: 15, minWave: 5 },
@@ -172,7 +173,7 @@ class Game {
       totalKills: 0, totalRevives: 0, totalTeamKills: 0, rounds: 0,
       facing: 1, onGround: false, climbing: false, dashT: 0, dashDir: 1, dashCd: 0, jumpHeld: false, jumpTime: 0, speedBoost: false,
       shootTimer: 0, invulnTimer: 0, fireTick: 0, emoteTimer: 0,
-      weapon: 'rifle', weaponTimer: 0, speedTimer: 0, stinkTimer: 0, incTimer: 0, doubleTimer: 0, disguiseTimer: 0, item: null,
+      weapon: 'rifle', ammo: 0, speedTimer: 0, stinkTimer: 0, incAmmo: 0, doubleTimer: 0, disguiseTimer: 0, item: null,
       reviveProgress: 0, reviver: 0, reviving: 0,
       spawnedAt: this.time, lastSurvival: 0, lifeKills: 0, bestSurvival: 0, bestLifeKills: 0, bestScore: 0,
       input: { left: false, right: false, jump: false, shoot: false, down: false, revive: false, dash: 0, use: false, throw: 0 },
@@ -237,7 +238,7 @@ class Game {
   respawnPlayer(p) {
     Object.assign(p, {
       alive: true, hp: PLAYER.hp, spawnedAt: this.time, lifeKills: 0, score: 0, kills: 0, teamKills: 0, roundRevives: 0,
-      weapon: 'rifle', weaponTimer: 0, speedTimer: 0, stinkTimer: 0, incTimer: 0, doubleTimer: 0, disguiseTimer: 0, item: null, speedBoost: false, reviveProgress: 0, climbing: false, dashT: 0,
+      weapon: 'rifle', ammo: 0, speedTimer: 0, stinkTimer: 0, incAmmo: 0, doubleTimer: 0, disguiseTimer: 0, item: null, speedBoost: false, reviveProgress: 0, climbing: false, dashT: 0,
       x: WORLD.width / 2 - PLAYER.w / 2 + rand(-80, 80), y: WORLD.groundY - PLAYER.h, vx: 0, vy: 0, invulnTimer: 1.5,
     });
     this.push({ kind: 'respawn', id: p.id, x: p.x, y: p.y });
@@ -248,12 +249,23 @@ class Game {
     p.shootTimer = weapon.cooldown;
     const gunY = p.y + 19;
     const bx = p.facing > 0 ? p.x + p.w + 4 : p.x - BULLET.w - 4;
+    const fire = p.incAmmo > 0;
     for (let i = 0; i < weapon.pellets; i++) {
       const k = weapon.pellets === 1 ? 0 : i / (weapon.pellets - 1) - 0.5;
       const id = this.nextId++;
-      this.bullets.set(id, { id, owner: p.id, x: bx, y: gunY, w: BULLET.w, h: BULLET.h, vx: p.facing * BULLET.speed, vy: k * weapon.spread * 2, damage: weapon.damage, life: BULLET.life, leafed: new Set(), fire: p.incTimer > 0 });
+      this.bullets.set(id, { id, owner: p.id, x: bx, y: gunY, w: BULLET.w, h: BULLET.h, vx: p.facing * BULLET.speed, vy: k * weapon.spread * 2, damage: weapon.damage, life: BULLET.life, leafed: new Set(), fire });
     }
-    this.push({ kind: 'shoot', id: p.id, x: bx, y: gunY, dir: p.facing, weapon: p.weapon, fire: p.incTimer > 0 });
+    this.push({ kind: 'shoot', id: p.id, x: bx, y: gunY, dir: p.facing, weapon: p.weapon, fire });
+    // Ammo: one shell per trigger pull; the rifle comes back when the special gun runs dry
+    if (fire) p.incAmmo--;
+    if (p.weapon !== 'rifle') {
+      p.ammo--;
+      if (p.ammo <= 0) {
+        this.push({ kind: 'ammoout', id: p.id, weapon: p.weapon });
+        p.weapon = 'rifle';
+        p.ammo = 0;
+      }
+    }
   }
 
   findGhostNear(p) {
@@ -267,7 +279,7 @@ class Game {
   }
 
   reviveGhost(g, by) {
-    Object.assign(g, { alive: true, hp: PLAYER.reviveHp, spawnedAt: this.time, lifeKills: 0, reviveProgress: 0, reviver: 0, x: by.x, y: by.y, vx: 0, vy: 0, invulnTimer: PLAYER.reviveInvuln, weapon: 'rifle', climbing: false, fragile: true });
+    Object.assign(g, { alive: true, hp: PLAYER.reviveHp, spawnedAt: this.time, lifeKills: 0, reviveProgress: 0, reviver: 0, x: by.x, y: by.y, vx: 0, vy: 0, invulnTimer: PLAYER.reviveInvuln, weapon: 'rifle', ammo: 0, climbing: false, fragile: true });
     by.score += 15;
     by.roundRevives++;
     by.totalRevives++;
@@ -288,16 +300,8 @@ class Game {
     p.shootTimer = Math.max(0, p.shootTimer - dt);
     p.invulnTimer = Math.max(0, p.invulnTimer - dt);
     p.emoteTimer = Math.max(0, p.emoteTimer - dt);
-    if (p.weaponTimer > 0) {
-      p.weaponTimer -= dt;
-      if (p.weaponTimer <= 0) {
-        p.weapon = 'rifle';
-        p.weaponTimer = 0;
-      }
-    }
     p.speedTimer = Math.max(0, p.speedTimer - dt);
     p.stinkTimer = Math.max(0, p.stinkTimer - dt);
-    p.incTimer = Math.max(0, p.incTimer - dt);
     p.doubleTimer = Math.max(0, p.doubleTimer - dt);
     p.disguiseTimer = Math.max(0, p.disguiseTimer - dt);
     p.speedBoost = p.speedTimer > 0;
@@ -360,7 +364,7 @@ class Game {
     }
     else if (k === 'speed') p.speedTimer = PICKUPS.speed.duration;
     else if (k === 'stink') p.stinkTimer = PICKUPS.stink.duration;
-    else if (k === 'incendiary') p.incTimer = PICKUPS.incendiary.duration;
+    else if (k === 'incendiary') p.incAmmo += PICKUPS.incendiary.ammo;
     else if (k === 'double') p.doubleTimer = PICKUPS.double.duration;
     else if (k === 'disguise') p.disguiseTimer = PICKUPS.disguise.duration;
     else if (k === 'curse') {
@@ -378,8 +382,9 @@ class Game {
       this.push({ kind: 'curse', id: p.id, x: p.x + p.w / 2, y: p.y + p.h });
     } else if (PICKUPS[k] && PICKUPS[k].held) p.item = k;
     else if (WEAPONS[k]) {
+      // The same gun again tops the ammo up; a different one replaces it
+      p.ammo = (p.weapon === k ? p.ammo : 0) + WEAPONS[k].ammo;
       p.weapon = k;
-      p.weaponTimer = WEAPONS[k].duration;
     }
     this.push({ kind: 'pickup', id: p.id, item: k, x: pk.x + pk.w / 2, y: pk.y + pk.h / 2 });
   }
@@ -1363,8 +1368,8 @@ class Game {
         dashCd: Math.round(p.dashCd * 100) / 100, jumpHeld: p.jumpHeld, jumpTime: Math.round(p.jumpTime * 100) / 100, dashDir: p.dashDir,
       dropT: Math.round((p.dropT || 0) * 100) / 100, dropY: p.dropY || 0, downHeld: !!p.downHeld,
         seq: p.seq,
-        weapon: p.weapon, weaponT: Math.ceil(p.weaponTimer), speedT: Math.ceil(p.speedTimer), stinkT: Math.ceil(p.stinkTimer),
-      incT: Math.ceil(p.incTimer), doubleT: Math.ceil(p.doubleTimer), disguiseT: Math.ceil(p.disguiseTimer), item: p.item, fragile: p.fragile,
+        weapon: p.weapon, ammo: p.ammo, speedT: Math.ceil(p.speedTimer), stinkT: Math.ceil(p.stinkTimer),
+      incAmmo: p.incAmmo, doubleT: Math.ceil(p.doubleTimer), disguiseT: Math.ceil(p.disguiseTimer), item: p.item, fragile: p.fragile,
         revive: p.alive ? 0 : Math.round((p.reviveProgress / PLAYER.reviveTime) * 100) / 100,
         reviving: p.reviving,
         survived: Math.round(p.alive ? this.time - p.spawnedAt : p.lastSurvival || 0),

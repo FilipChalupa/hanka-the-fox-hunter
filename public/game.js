@@ -23,6 +23,29 @@ const FONT_TITLE = '"Cinzel", "Georgia", serif';
 const FONT_BODY = '"Nunito", "Trebuchet MS", sans-serif';
 
 const clamp = S.clamp;
+
+// ---------------------------------------------------------------------------
+// Settings (Esc menu), persisted in localStorage
+// ---------------------------------------------------------------------------
+const DEFAULT_KEYS = {
+  left: ['KeyA', 'ArrowLeft'], right: ['KeyD', 'ArrowRight'], jump: ['KeyW', 'ArrowUp', 'Space'], down: ['KeyS', 'ArrowDown'],
+  shoot: ['ShiftLeft', 'ShiftRight', 'KeyF', 'KeyX', 'KeyJ', 'KeyK'], revive: ['KeyE'], use: ['KeyQ'],
+};
+const settings = { sfx: 1, musicVol: 0.8, shake: true, flashes: true, hud: 1, quality: 'auto', keys: JSON.parse(JSON.stringify(DEFAULT_KEYS)) };
+try {
+  const saved = JSON.parse(localStorage.getItem('hanka-settings') || '{}');
+  Object.assign(settings, saved);
+  settings.keys = { ...JSON.parse(JSON.stringify(DEFAULT_KEYS)), ...(saved.keys || {}) };
+} catch {}
+function saveSettings() {
+  try {
+    localStorage.setItem('hanka-settings', JSON.stringify(settings));
+  } catch {}
+}
+let hudScale = settings.hud;
+let qualityLow = settings.quality === 'low';
+let fpsLowFor = 0;
+const qMul = () => (qualityLow ? 0.35 : 1);
 const lerp = (a, b, t) => a + (b - a) * t;
 const rand = (a, b) => a + Math.random() * (b - a);
 const easeOut = (t) => 1 - Math.pow(1 - t, 3);
@@ -37,6 +60,10 @@ let wantReconnect = false;
 
 let prevSnap = null;
 let currSnap = null;
+const snapBuf = []; // recent snapshots for server-time interpolation
+let interpDelay = 100; // ms behind the latest snapshot; adapts to jitter
+let lastArrival = 0;
+const arrivalGaps = [];
 
 // Client-side prediction of my own hunter
 const pred = { x: 0, y: 0, vx: 0, vy: 0, w: S.PLAYER.w, h: S.PLAYER.h, onGround: false, climbing: false, dashT: 0, dashDir: 1, dashCd: 0, jumpHeld: false, jumpTime: 0, facing: 1, speedBoost: false, alive: true };
@@ -61,6 +88,9 @@ const rainDrops = [];
 const anims = new Map();
 const emoteBubbles = new Map();
 const hornRings = [];
+const itemFlyers = []; // picked-up crate icons flying into the HUD
+const marks = []; // lasting ground marks: footprints in the wet, scorched grass
+let markTimer = 0;
 let denyT = 0; // HUD shake after a refused action
 let denyCooldown = 0;
 let rumbleT = 0;
@@ -149,6 +179,8 @@ let chosenOutfit = -1;
 let audioCtx = null;
 let ambientStarted = false;
 let masterGain = null; // everything (effects, ambience, music) goes through here; M mutes it
+let sfxGain = null;
+let musicGain = null;
 let soundOn = true;
 let rainNode = null;
 let footTimer = 0;
@@ -167,6 +199,12 @@ function ensureAudio() {
     masterGain = audioCtx.createGain();
     masterGain.gain.value = soundOn ? 1 : 0.0001;
     masterGain.connect(audioCtx.destination);
+    sfxGain = audioCtx.createGain();
+    sfxGain.gain.value = settings.sfx;
+    sfxGain.connect(masterGain);
+    musicGain = audioCtx.createGain();
+    musicGain.gain.value = settings.musicVol;
+    musicGain.connect(masterGain);
   }
   if (audioCtx && !ambientStarted) {
     ambientStarted = true;
@@ -195,7 +233,7 @@ function playTone({ type = 'square', from = 440, to = 220, dur = 0.1, gain = 0.0
   const g = audioCtx.createGain();
   g.gain.setValueAtTime(gain, t0);
   g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-  g.connect(masterGain);
+  g.connect(sfxGain);
   if (noise) {
     const src = audioCtx.createBufferSource();
     src.buffer = noiseBuffer(dur, false);
@@ -232,7 +270,7 @@ function startAmbient() {
   lfo.start();
   const g = audioCtx.createGain();
   g.gain.value = 0.05;
-  src.connect(filter).connect(g).connect(masterGain);
+  src.connect(filter).connect(g).connect(sfxGain);
   src.start();
 
   const cricket = () => {
@@ -264,7 +302,7 @@ function setRainSound(on) {
     const g = audioCtx.createGain();
     g.gain.setValueAtTime(0.0001, audioCtx.currentTime);
     g.gain.exponentialRampToValueAtTime(0.06, audioCtx.currentTime + 1.5);
-    src.connect(filter).connect(g).connect(masterGain);
+    src.connect(filter).connect(g).connect(sfxGain);
     src.start();
     rainNode = { src, g };
   } else if (!on && rainNode) {
@@ -303,6 +341,11 @@ const CHORDS = [
 const PENTA = [0, 3, 5, 7, 10, 12, 15, 17, 19, 22]; // A minor pentatonic across two octaves
 const hz = (semi, base = 110) => base * Math.pow(2, semi / 12);
 
+function applyVolumes() {
+  if (sfxGain) sfxGain.gain.value = settings.sfx;
+  if (musicGain) musicGain.gain.value = settings.musicVol;
+}
+
 function musicNote({ type, freq, t, dur, gain, dest, attack = 0.01, detune = 0 }) {
   const osc = audioCtx.createOscillator();
   osc.type = type;
@@ -322,7 +365,7 @@ function startMusic() {
   music.started = true;
   music.master = audioCtx.createGain();
   music.master.gain.value = 0.0001;
-  music.master.connect(masterGain);
+  music.master.connect(musicGain);
   music.master.gain.exponentialRampToValueAtTime(1, audioCtx.currentTime + 3);
   music.padFilter = audioCtx.createBiquadFilter();
   music.padFilter.type = 'lowpass';
@@ -457,6 +500,20 @@ const SFX = {
     playTone({ type: 'sine', from: 80, to: 30, dur: 1.2, gain: 0.1 });
   },
   rubble: () => playTone({ noise: true, from: 600, to: 60, dur: 0.6, gain: 0.12 }),
+  roar: () => {
+    playTone({ type: 'sawtooth', from: 90, to: 40, dur: 1.4, gain: 0.16 });
+    playTone({ noise: true, from: 400, to: 80, dur: 1.2, gain: 0.1 });
+  },
+  howl: () => {
+    playTone({ type: 'sine', from: 300, to: 620, dur: 0.7, gain: 0.08 });
+    playTone({ type: 'sine', from: 620, to: 420, dur: 0.9, gain: 0.07, delay: 0.7 });
+  },
+  fanfare: () => {
+    [523, 659, 784, 1047, 784, 1047].forEach((f, i) => playTone({ type: 'triangle', from: f, to: f, dur: 0.35, gain: 0.09, delay: i * 0.18 }));
+    playTone({ type: 'triangle', from: 1319, to: 1319, dur: 1.2, gain: 0.1, delay: 1.1 });
+  },
+  toss: () => playTone({ noise: true, from: 1200, to: 400, dur: 0.15, gain: 0.05, filterType: 'bandpass' }),
+  empty: () => playTone({ type: 'square', from: 300, to: 200, dur: 0.06, gain: 0.04 }),
   horn: () => {
     playTone({ type: 'sawtooth', from: 220, to: 230, dur: 0.5, gain: 0.09 });
     playTone({ type: 'sawtooth', from: 330, to: 340, dur: 0.6, gain: 0.09, delay: 0.45 });
@@ -490,16 +547,15 @@ const SFX = {
 // Input
 // ===========================================================================
 const input = { left: false, right: false, jump: false, shoot: false, down: false, revive: false };
-const KEYMAP = {
-  ArrowLeft: 'left', KeyA: 'left',
-  ArrowRight: 'right', KeyD: 'right',
-  ArrowUp: 'jump', KeyW: 'jump', Space: 'jump',
-  ArrowDown: 'down', KeyS: 'down',
-  // Ctrl is deliberately not a shoot key: Ctrl+W (shoot + jump) would close the tab.
-  ShiftLeft: 'shoot', ShiftRight: 'shoot', KeyF: 'shoot', KeyX: 'shoot', KeyJ: 'shoot', KeyK: 'shoot',
-  KeyE: 'revive',
-  KeyQ: 'use',
-};
+// Ctrl is deliberately never a shoot key: Ctrl+W (shoot + jump) would close the tab.
+let KEYMAP = {};
+function rebuildKeymap() {
+  KEYMAP = {};
+  for (const [action, codes] of Object.entries(settings.keys)) for (const c of codes) if (!c.startsWith('Control')) KEYMAP[c] = action;
+}
+rebuildKeymap();
+let useDownAt = 0;
+let pendingThrow = 0;
 const EMOTE_KEYS = { Digit1: 1, Digit2: 2, Digit3: 3, Digit4: 4, Numpad1: 1, Numpad2: 2, Numpad3: 3, Numpad4: 4 };
 const lastTap = { left: 0, right: 0 };
 
@@ -508,12 +564,12 @@ function send(obj) {
 }
 
 function currentInput() {
-  return { left: input.left, right: input.right, jump: input.jump, down: input.down, shoot: input.shoot, revive: input.revive, dash: pendingDash, use: pendingUse };
+  return { left: input.left, right: input.right, jump: input.jump, down: input.down, shoot: input.shoot, revive: input.revive, dash: pendingDash, use: pendingUse, throw: pendingThrow };
 }
 
 function sendInput(force) {
   if (!myId) return;
-  const key = `${input.left}${input.right}${input.jump}${input.shoot}${input.down}${input.revive}${pendingDash}${pendingUse}`;
+  const key = `${input.left}${input.right}${input.jump}${input.shoot}${input.down}${input.revive}${pendingDash}${pendingUse}${pendingThrow}`;
   const now = performance.now();
   if (!force && key === lastInputKey && now - lastInputSent < 50) return;
   lastInputKey = key;
@@ -526,7 +582,7 @@ function requestDash(dir) {
 }
 
 window.addEventListener('keydown', (e) => {
-  if (document.activeElement === nameInput) return;
+  if (document.activeElement === nameInput || menuOpen || capturing) return;
   if (EMOTE_KEYS[e.code] && !e.repeat) send({ t: 'emote', n: EMOTE_KEYS[e.code] });
   if (e.code === 'KeyM' && !e.repeat) {
     setSound(!soundOn);
@@ -542,7 +598,8 @@ window.addEventListener('keydown', (e) => {
     lastTap[action] = now;
   }
   if (action === 'use') {
-    pendingUse = true;
+    // Tap = use, hold and release = throw
+    if (!useDownAt) useDownAt = performance.now();
     return;
   }
   if (!input[action]) {
@@ -554,8 +611,32 @@ window.addEventListener('keyup', (e) => {
   const action = KEYMAP[e.code];
   if (!action) return;
   e.preventDefault();
+  if (action === 'use') {
+    if (useDownAt) {
+      if (performance.now() - useDownAt >= 300) pendingThrow = throwDirection();
+      else pendingUse = true;
+    }
+    useDownAt = 0;
+    return;
+  }
   input[action] = false;
 });
+
+// Throw towards the nearest living teammate when one is close, otherwise where the hunter faces.
+function throwDirection() {
+  if (!currSnap) return pred.facing || 1;
+  let best = null;
+  let bestD = 420;
+  for (const p of currSnap.data.players) {
+    if (p.id === myId || !p.alive || p.on === false) continue;
+    const d = Math.abs(p.x - pred.x);
+    if (d < bestD && Math.abs(p.y - pred.y) < 160) {
+      bestD = d;
+      best = p;
+    }
+  }
+  return best ? (best.x > pred.x ? 1 : -1) : pred.facing || 1;
+}
 window.addEventListener('blur', () => {
   for (const k in input) input[k] = false;
 });
@@ -621,10 +702,15 @@ if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
       held.add(e.pointerId);
       pointerOwner.set(e.pointerId, () => {
         held.delete(e.pointerId);
+        if (key === 'use' && useDownAt) {
+          if (performance.now() - useDownAt >= 350) pendingThrow = throwDirection();
+          else pendingUse = true;
+          useDownAt = 0;
+        }
         apply();
       });
       if (key === 'dash') requestDash(pred.facing || 1);
-      else if (key === 'use') pendingUse = true;
+      else if (key === 'use') useDownAt = performance.now();
       apply();
     });
     const release = (e) => {
@@ -715,6 +801,21 @@ function connect(name) {
       return;
     }
     if (msg.t === 'welcome') {
+      if (msg.proto && msg.proto !== S.PROTOCOL) {
+        // Stale client script against a newer server: reload once with a cache-busting query.
+        let tried = false;
+        try {
+          tried = sessionStorage.getItem('hanka-reload') === String(msg.proto);
+          sessionStorage.setItem('hanka-reload', String(msg.proto));
+        } catch {}
+        if (!tried) {
+          statusEl.textContent = 'Nová verze hry, načítám znovu…';
+          const u = new URL(location.href);
+          u.searchParams.set('v', msg.proto);
+          location.replace(u.toString());
+          return;
+        }
+      }
       myId = msg.id;
       myToken = msg.token;
       try {
@@ -735,8 +836,19 @@ function connect(name) {
       const data = msg.t === 'state' ? msg : currSnap ? S.applyDelta(currSnap.data, msg) : null;
       if (!data) return;
       prevSnap = currSnap;
-      currSnap = { data, at: performance.now() };
-      if (data.round.over && !gameOver) gameOver = { ranking: [...data.players].sort((a, b) => b.score - a.score).map((p) => ({ ...p, badges: [] })), wave: data.wave, kills: data.kills, t: 0 };
+      const at = performance.now();
+      if (lastArrival) {
+        arrivalGaps.push(at - lastArrival);
+        if (arrivalGaps.length > 40) arrivalGaps.shift();
+        const mean = arrivalGaps.reduce((a, b) => a + b, 0) / arrivalGaps.length;
+        const sd = Math.sqrt(arrivalGaps.reduce((a, b) => a + (b - mean) * (b - mean), 0) / arrivalGaps.length);
+        interpDelay = clamp(mean * 1.5 + sd * 2, 60, 260);
+      }
+      lastArrival = at;
+      currSnap = { data, at, st: data.time };
+      snapBuf.push(currSnap);
+      while (snapBuf.length > 12) snapBuf.shift();
+      if (data.round.over && !gameOver) gameOver = { ranking: [...data.players].sort((a, b) => b.score - a.score).map((p) => ({ ...p, badges: [] })), teamBadges: [], wave: data.wave, kills: data.kills, won: !!data.round.won, t: 0 };
       if (!data.round.over && gameOver) gameOver = null;
       reconcile(data);
       handleEvents(data.events);
@@ -749,6 +861,8 @@ function connect(name) {
     const hadId = myId;
     myId = 0;
     prevSnap = currSnap = null;
+    snapBuf.length = 0;
+    lastArrival = 0;
     predActive = false;
     overlay.classList.remove('hidden');
     if (wantReconnect && hadId && reconnectTries < 8) {
@@ -829,9 +943,10 @@ function predictStep(dt) {
       if (h === 'land') SFX.land();
     }
   } else S.moveGhost(pred, inp, dt);
-  sendInput(pendingDash !== 0 || pendingUse);
+  sendInput(pendingDash !== 0 || pendingUse || pendingThrow !== 0);
   pendingDash = 0;
   pendingUse = false;
+  pendingThrow = 0;
   // Error smoothing: the render offset melts away over ~100 ms
   const k = Math.min(1, dt * 12);
   renderOff.x -= renderOff.x * k;
@@ -875,6 +990,109 @@ try {
 updateOutfitLabel();
 nameInput.focus();
 
+// ---------------------------------------------------------------------------
+// Esc menu
+// ---------------------------------------------------------------------------
+const menuEl = document.getElementById('menu');
+let menuOpen = false;
+let capturing = null;
+const KEY_LABELS = { left: 'Doleva', right: 'Doprava', jump: 'Skok / nahoru', down: 'Dolů / propad', shoot: 'Střelba', revive: 'Oživit', use: 'Použít (drž = hodit)' };
+function prettyCode(c) {
+  return c.replace('Key', '').replace('Arrow', '').replace('Digit', '').replace('Left', ' L').replace('Right', ' R');
+}
+function renderKeys() {
+  const box = document.getElementById('keys');
+  if (!box) return;
+  box.innerHTML = '';
+  for (const [action, label] of Object.entries(KEY_LABELS)) {
+    const row = document.createElement('div');
+    row.className = 'keyrow';
+    const l = document.createElement('span');
+    l.textContent = label;
+    const k = document.createElement('code');
+    k.textContent = capturing === action ? 'stiskni klávesu…' : settings.keys[action].map(prettyCode).join(', ');
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = 'Změnit';
+    b.addEventListener('click', () => {
+      capturing = action;
+      renderKeys();
+    });
+    row.append(l, k, b);
+    box.appendChild(row);
+  }
+}
+function toggleMenu(open) {
+  menuOpen = open;
+  if (!menuEl) return;
+  menuEl.hidden = !open;
+  if (open) {
+    for (const k in input) input[k] = false;
+    document.getElementById('setSfx').value = settings.sfx;
+    document.getElementById('setMusic').value = settings.musicVol;
+    document.getElementById('setShake').checked = settings.shake;
+    document.getElementById('setFlashes').checked = settings.flashes;
+    document.getElementById('setHud').value = String(settings.hud);
+    document.getElementById('setQuality').value = settings.quality;
+    renderKeys();
+  } else capturing = null;
+}
+if (menuEl) {
+  document.getElementById('setSfx').addEventListener('input', (e) => {
+    settings.sfx = Number(e.target.value);
+    applyVolumes();
+    saveSettings();
+  });
+  document.getElementById('setMusic').addEventListener('input', (e) => {
+    settings.musicVol = Number(e.target.value);
+    applyVolumes();
+    saveSettings();
+  });
+  document.getElementById('setShake').addEventListener('change', (e) => {
+    settings.shake = e.target.checked;
+    saveSettings();
+  });
+  document.getElementById('setFlashes').addEventListener('change', (e) => {
+    settings.flashes = e.target.checked;
+    saveSettings();
+  });
+  document.getElementById('setHud').addEventListener('change', (e) => {
+    settings.hud = Number(e.target.value);
+    saveSettings();
+  });
+  document.getElementById('setQuality').addEventListener('change', (e) => {
+    settings.quality = e.target.value;
+    qualityLow = settings.quality === 'low';
+    fpsLowFor = 0;
+    saveSettings();
+  });
+  document.getElementById('keysReset').addEventListener('click', () => {
+    settings.keys = JSON.parse(JSON.stringify(DEFAULT_KEYS));
+    rebuildKeymap();
+    saveSettings();
+    renderKeys();
+  });
+  document.getElementById('menuClose').addEventListener('click', () => toggleMenu(false));
+  document.getElementById('menuBtn').addEventListener('click', () => toggleMenu(!menuOpen));
+}
+window.addEventListener('keydown', (e) => {
+  if (capturing) {
+    e.preventDefault();
+    if (e.code !== 'Escape' && !e.code.startsWith('Control')) {
+      settings.keys[capturing] = [e.code];
+      rebuildKeymap();
+      saveSettings();
+    }
+    capturing = null;
+    renderKeys();
+    return;
+  }
+  if (e.code === 'Escape' && myId) {
+    e.preventDefault();
+    toggleMenu(!menuOpen);
+  }
+}, true);
+
 // Invite: copy the game link (without the ?name auto-join) to the clipboard
 const inviteBtn = document.getElementById('invite');
 if (inviteBtn) {
@@ -897,6 +1115,19 @@ if (inviteBtn) {
         inviteBtn.classList.remove('done');
         inviteBtn.textContent = '🔗 Pozvat kamarády (zkopírovat odkaz)';
       }, 2500);
+    }
+  });
+}
+
+// Share sheet on phones and browsers that have one
+const shareBtn = document.getElementById('share');
+if (shareBtn && navigator.share) {
+  shareBtn.hidden = false;
+  shareBtn.addEventListener('click', async () => {
+    try {
+      await navigator.share({ title: 'Hanka The Fox Hunter', text: 'Pojď lovit lišky v nočním lese!', url: `${location.origin}${location.pathname}` });
+    } catch {
+      /* user closed the sheet */
     }
   });
 }
@@ -970,6 +1201,7 @@ function announce(title, sub, color = '#e8d9ff', glow = '#7a4fd1', maxT = 3.5) {
 }
 
 function burst(x, y, n, opts) {
+  n = Math.max(1, Math.round(n * qMul()));
   for (let i = 0; i < n; i++) {
     const a = rand(0, Math.PI * 2);
     const s = rand(opts.minSpeed || 40, opts.maxSpeed || 200);
@@ -990,6 +1222,11 @@ function spawnLeafBurst(x, y, n) {
     const rnd = Math.random();
     leaves.push({ x: x + rand(-60, 60), y: y + rand(-30, 20), vx: rand(-30, 30), vy: rand(30, 70), rot: rand(0, 6), spin: rand(-4, 4), phase: rand(0, 10), color: rnd < 0.4 ? '#c9742b' : rnd < 0.7 ? '#d9a441' : '#7fa843', size: rand(3, 5) });
   }
+}
+
+function addMark(x, y, kind, facing = 1) {
+  marks.push({ x, y, kind, facing, r: rand(0.8, 1.2) });
+  if (marks.length > 500) marks.shift();
 }
 
 function anim(id) {
@@ -1016,6 +1253,7 @@ function handleEvents(events) {
         break;
       }
       case 'ignite':
+        addMark(ev.x, ev.fireY, 'scorch');
         burst(ev.x, ev.fireY, 10, { colors: ['#ffd27f', '#ff8c42', '#ffffff'], minSpeed: 30, maxSpeed: 160, life: 0.4, size: 3, gravity: 100 });
         flashes.push({ x: ev.x, y: ev.fireY - 10, r: 120, t: 0.2, maxT: 0.2, color: '255,200,120' });
         break;
@@ -1079,6 +1317,7 @@ function handleEvents(events) {
         burst(ev.x, ev.y, 8, { colors: ['#e07a5f', '#d6ff78'], minSpeed: 20, maxSpeed: 80, life: 0.5, size: 3, up: 30 });
         break;
       case 'clash':
+        addMark(ev.x, ev.fireY, 'scorch');
         burst(ev.x, ev.y, 26, { colors: ['#fff6c2', '#ffd27f', '#ff8c42', '#ffffff'], minSpeed: 60, maxSpeed: 320, life: 0.6, size: 4, gravity: 200 });
         flashes.push({ x: ev.x, y: ev.y, r: 260, t: 0.35, maxT: 0.35, color: '255,240,200' });
         shake = Math.max(shake, 9);
@@ -1093,6 +1332,7 @@ function handleEvents(events) {
       case 'pickup': {
         if (ev.item === 'curse') break;
         const info = PICKUP_INFO[ev.item] || { label: ev.item, color: '#fff' };
+        if (ev.id === myId) itemFlyers.push({ wx: ev.x, wy: ev.y, icon: info.icon, color: info.color, t: 0 });
         burst(ev.x, ev.y, 14, { colors: [info.color, '#ffffff'], minSpeed: 30, maxSpeed: 160, life: 0.6, gravity: -60, round: true });
         flashes.push({ x: ev.x, y: ev.y, r: 120, t: 0.4, maxT: 0.4, color: '255,255,220' });
         floatingTexts.push({ x: ev.x, y: ev.y - 20, text: info.label, color: info.color, life: 1.1, size: 13 });
@@ -1248,10 +1488,55 @@ function handleEvents(events) {
         addFeed(`✅ Vlna ${ev.wave} hotová, ${ev.breather} s klidu`, '#c9e6b8');
         SFX.waveDone();
         break;
-      case 'wave':
-        announce(`Vlna ${ev.wave}`, `Lišky zuří. Přichází jich až ${ev.maxFoxes}.`);
+      case 'wave': {
+        const news = (ev.unlocked || []).map((k) => (PICKUP_INFO[k] ? `${PICKUP_INFO[k].icon} ${PICKUP_INFO[k].label}` : k));
+        announce(`Vlna ${ev.wave}`, news.length ? `Nově v lese: ${news.join(', ')}` : `Lišky zuří. Přichází jich až ${ev.maxFoxes}.`);
         addFeed(`🌙 Vlna ${ev.wave}: přichází až ${ev.maxFoxes} lišek`, '#c9b3ff');
+        if (news.length) addFeed(`🎁 Nové bedýnky: ${news.join(', ')}`, '#ffd27f');
         SFX.wave();
+        break;
+      }
+      case 'boss':
+        announce('Liščí matka', 'Přišla si pro vás. Nejdřív bojuje sama.', '#ffb347', '#d63d3d', 5);
+        addFeed('🐺 Liščí matka vylezla z nory!', '#ff8b8b');
+        shake = Math.max(shake, 14);
+        lightningFlash = 0.4;
+        SFX.roar();
+        break;
+      case 'bossphase':
+        announce('Druhá fáze', 'Matka volá smečku z nor!', '#ff8b8b', '#d63d3d', 4);
+        shake = Math.max(shake, 10);
+        SFX.roar();
+        break;
+      case 'howl':
+        addFeed(`🐺 Matka zavyla, přibíhají ${ev.count} lišky`, '#ffb08a');
+        hornRings.push({ x: ev.x, y: ev.y, t: 0, red: true });
+        shake = Math.max(shake, 5);
+        SFX.howl();
+        break;
+      case 'stomp':
+        burst(ev.x, ev.y, 24, { colors: ['#6b4726', '#8a5a30', '#3b2a1a'], minSpeed: 60, maxSpeed: 300, life: 0.7, up: 160, size: 6 });
+        shake = Math.max(shake, 9);
+        buzz(50);
+        SFX.rubble();
+        break;
+      case 'victory':
+        gameOver = { ranking: ev.ranking, teamBadges: ev.teamBadges || [], wave: ev.wave, kills: ev.kills, won: true, t: 0 };
+        announce('Vítězství!', 'Liščí matka je poražena. Les je zase váš.', '#ffd27f', '#e08b1f', 5);
+        for (let i = 0; i < 6; i++) burst(camX + rand(0, CAM.w), camY + rand(0, CAM.h * 0.5), 12, { colors: ['#ffd27f', '#ffffff', '#7fe0a8', '#ff8c42'], minSpeed: 30, maxSpeed: 180, life: 2, size: 5, gravity: 120, round: true });
+        SFX.fanfare();
+        break;
+      case 'throw':
+        SFX.toss();
+        break;
+      case 'land':
+        dust(ev.x, ev.y, 4);
+        break;
+      case 'ammoout':
+        if (ev.id === myId) {
+          addFeed(`🔫 ${PICKUP_INFO[ev.weapon] ? PICKUP_INFO[ev.weapon].label : ev.weapon}: došly náboje, zpátky puška`, '#ffb3a7');
+          SFX.empty();
+        }
         break;
       case 'mega':
         announce(ev.count > 1 ? `${ev.count}× MEGA LIŠKA!` : 'MEGA LIŠKA!', 'Země se třese. Schovej se, nebo střílej.', '#ffb347', '#d63d3d', 4);
@@ -1260,7 +1545,7 @@ function handleEvents(events) {
         playTone({ type: 'sawtooth', from: 120, to: 40, dur: 0.9, gain: 0.12 });
         break;
       case 'gameover':
-        gameOver = { ranking: ev.ranking, wave: ev.wave, kills: ev.kills, t: 0 };
+        gameOver = { ranking: ev.ranking, teamBadges: ev.teamBadges || [], wave: ev.wave, kills: ev.kills, won: false, t: 0 };
         addFeed('☠️ Lišky ovládly les. Nové kolo za chvíli.', '#ff8b8b');
         playTone({ type: 'sawtooth', from: 300, to: 50, dur: 1.4, gain: 0.1 });
         break;
@@ -1268,6 +1553,7 @@ function handleEvents(events) {
         gameOver = null;
         ghostHint = 0;
         scoreShown = 0;
+        marks.length = 0;
         if (ev.world) {
           world = ev.world;
           buildScenery(world.seed);
@@ -1814,6 +2100,27 @@ function drawPlatforms(g, time, broken) {
       }
       g.fillStyle = '#2f6b32';
       g.fillRect(x, y, p.w, 10);
+      // Lasting marks: scorched grass and footprints in the wet soil
+      for (const m of marks) {
+        const mx = m.x - camX;
+        if (mx < -60 || mx > CAM.w + 60) continue;
+        const my = m.y - camY;
+        if (m.kind === 'scorch') {
+          g.fillStyle = 'rgba(25,15,8,0.75)';
+          g.beginPath();
+          g.ellipse(mx, my + 3, 34 * m.r, 6, 0, 0, Math.PI * 2);
+          g.fill();
+          g.fillStyle = 'rgba(60,40,20,0.6)';
+          g.beginPath();
+          g.ellipse(mx, my + 2, 18 * m.r, 3, 0, 0, Math.PI * 2);
+          g.fill();
+        } else {
+          g.fillStyle = 'rgba(30,18,8,0.5)';
+          g.beginPath();
+          g.ellipse(mx, my + 4, 4, 2.2, 0, 0, Math.PI * 2);
+          g.fill();
+        }
+      }
       g.fillStyle = '#4c9a3f';
       for (let gx = Math.floor(camX / 14) * 14; gx < camX + CAM.w + 14; gx += 14) {
         const k = (gx / 14) | 0;
@@ -1908,7 +2215,7 @@ function drawGroundFog(g, time, weather) {
 function updateRain(dt, weather) {
   const heavy = weather === 'storm';
   if (weather === 'rain' || heavy) {
-    for (let i = 0; i < (heavy ? 6 : 3); i++) rainDrops.push({ x: camX + rand(-60, CAM.w + 60), y: camY - 20, vy: rand(520, 700), vx: heavy ? -140 : -40 });
+    for (let i = 0; i < Math.round((heavy ? 6 : 3) * qMul()); i++) rainDrops.push({ x: camX + rand(-60, CAM.w + 60), y: camY - 20, vy: rand(520, 700), vx: heavy ? -140 : -40 });
   }
   for (let i = rainDrops.length - 1; i >= 0; i--) {
     const r = rainDrops[i];
@@ -2173,6 +2480,11 @@ function drawHunter(g, p, x, y, time, isMe) {
   g.fillRect(cx - 18, y - 22, 36, 5);
   g.fillStyle = p.hp > 40 ? '#5ad35a' : '#e04b4b';
   g.fillRect(cx - 18, y - 22, 36 * (p.hp / 100), 5);
+  if (p.fragile) {
+    g.strokeStyle = `rgba(255,210,127,${0.5 + 0.5 * Math.sin(time * 8)})`;
+    g.lineWidth = 1.5;
+    g.strokeRect(cx - 19.5, y - 23.5, 39, 8);
+  }
 }
 
 function drawGhost(g, p, x, y, time, isMe) {
@@ -2226,7 +2538,7 @@ function drawGhost(g, p, x, y, time, isMe) {
 
 function drawFoxSprite(g, opts) {
   const { facing = 1, run = 0, air = false, bite = 0, hurt = false, alpha = 1, rot = 0, mega = false, scale = 1, time = 0, kind = 'normal' } = opts;
-  const PAL = { normal: ['#e0561f', '#e8641f'], fast: ['#d9a441', '#e8b85a'], jumper: ['#5a6d84', '#6d8199'], digger: ['#6b4a2a', '#7d5a36'], mega: ['#b8391a', '#c9461f'] }[kind] || ['#e0561f', '#e8641f'];
+  const PAL = { normal: ['#e0561f', '#e8641f'], fast: ['#d9a441', '#e8b85a'], jumper: ['#5a6d84', '#6d8199'], digger: ['#6b4a2a', '#7d5a36'], mega: ['#b8391a', '#c9461f'], mother: ['#7a2412', '#8f2e18'] }[kind] || ['#e0561f', '#e8641f'];
   g.save();
   g.globalAlpha = alpha;
   g.rotate(rot);
@@ -2399,7 +2711,7 @@ function drawFox(g, f, x, y, time) {
   g.save();
   g.translate(x + w / 2, y + h);
   g.scale(1 + a.squash * 0.15, 1 - a.squash * 0.2);
-  drawFoxSprite(g, { facing: f.facing, run, air: !f.onGround, bite: a.bite > 0 ? Math.sin((a.bite / 0.25) * Math.PI) : 0, hurt: a.hurt > 0, mega: f.mega, scale, time, kind: f.kind, rot: sniff });
+  drawFoxSprite(g, { facing: f.facing, run, air: !f.onGround, bite: a.bite > 0 ? Math.sin((a.bite / 0.25) * Math.PI) : 0, hurt: a.hurt > 0, mega: f.mega || f.boss, scale, time, kind: f.kind, rot: sniff });
   g.restore();
   if (f.trapped) {
     g.strokeStyle = '#c9c9c9';
@@ -2420,7 +2732,9 @@ function drawFox(g, f, x, y, time) {
     g.textAlign = 'center';
     for (let i = 0; i < 3; i++) g.fillText('✦', x + w / 2 + Math.cos(time * 6 + i * 2.1) * 16, y - 14 + Math.sin(time * 6 + i * 2.1) * 5);
   }
-  if (f.mega || f.hp < f.maxHp) {
+  if (f.boss) {
+    // The Mother's health lives in the big bar at the top of the screen
+  } else if (f.mega || f.hp < f.maxHp) {
     const bw = f.mega ? 60 : 28;
     g.fillStyle = 'rgba(0,0,0,0.5)';
     g.fillRect(x + w / 2 - bw / 2, y - 12, bw, f.mega ? 6 : 4);
@@ -2461,11 +2775,12 @@ function drawBullet(g, b, x, y) {
 
 function drawPickup(g, pk, x, y, time) {
   const info = PICKUP_INFO[pk.kind] || PICKUP_INFO.medkit;
-  const bob = Math.sin(time * 3 + pk.id) * 3;
+  const bob = pk.air ? 0 : Math.sin(time * 3 + pk.id) * 3;
   const blink = pk.life <= 5 && Math.sin(time * 12) > 0;
   g.save();
   g.globalAlpha = blink ? 0.35 : 1;
   g.translate(x + 11, y + 11 + bob);
+  if (pk.air) g.rotate(time * 9);
   g.fillStyle = `${info.color}44`;
   g.beginPath();
   g.arc(0, 0, 18, 0, Math.PI * 2);
@@ -2718,10 +3033,10 @@ function drawHUD(g, me, snap, dt) {
   tabText(g, `${hp}`, 150, 78);
   if (me && me.alive) {
     const items = [];
-    if (me.weapon && me.weapon !== 'rifle') items.push({ info: PICKUP_INFO[me.weapon], t: me.weaponT });
+    if (me.weapon && me.weapon !== 'rifle') items.push({ info: PICKUP_INFO[me.weapon], t: me.ammo });
     if (me.speedT > 0) items.push({ info: PICKUP_INFO.speed, t: me.speedT });
     if (me.stinkT > 0) items.push({ info: PICKUP_INFO.stink, t: me.stinkT });
-    if (me.incT > 0) items.push({ info: PICKUP_INFO.incendiary, t: me.incT });
+    if (me.incAmmo > 0) items.push({ info: PICKUP_INFO.incendiary, t: me.incAmmo });
     if (me.doubleT > 0) items.push({ info: PICKUP_INFO.double, t: me.doubleT });
     if (me.disguiseT > 0) items.push({ info: PICKUP_INFO.disguise, t: me.disguiseT });
     items.slice(0, 4).forEach((it, i) => {
@@ -2745,7 +3060,7 @@ function drawHUD(g, me, snap, dt) {
       g.fillText(`${info.icon} ${info.label}`, 24, 124);
       g.fillStyle = '#f3ecd8';
       g.textAlign = 'right';
-      g.fillText(`Q: ${info.hint}`, 320, 124);
+      g.fillText(`Q: ${info.hint} · drž Q: hodit`, 320, 124);
       g.restore();
     }
     const cd = clamp(1 - pred.dashCd / S.PLAYER.dashCooldown, 0, 1);
@@ -2849,8 +3164,38 @@ function drawHUD(g, me, snap, dt) {
   g.globalAlpha = 1;
   g.textAlign = 'left';
 
+  // The Fox Mother's health bar
+  if (snap.boss) {
+    const boss = snap.foxes.find((f) => f.id === snap.boss.id);
+    if (boss) {
+      const bw = 420;
+      const bx0 = VIEW.w / 2 - bw / 2;
+      drawPanel(g, bx0, 12, bw, 46);
+      g.font = `900 13px ${FONT_TITLE}`;
+      g.textAlign = 'left';
+      g.fillStyle = '#ff8b8b';
+      g.fillText('Liščí matka', bx0 + 14, 30);
+      g.textAlign = 'right';
+      g.font = `700 11px ${FONT_BODY}`;
+      g.fillStyle = '#f3ecd8';
+      g.fillText(snap.boss.phase === 2 ? 'fáze 2: volá smečku' : 'fáze 1: bojuje sama', bx0 + bw - 14, 30);
+      g.fillStyle = 'rgba(0,0,0,0.55)';
+      roundRect(g, bx0 + 14, 36, bw - 28, 10, 3);
+      g.fill();
+      const k = boss.hp / boss.maxHp;
+      g.fillStyle = k > 0.5 ? '#e04b4b' : '#ffb347';
+      roundRect(g, bx0 + 14, 36, Math.max(6, (bw - 28) * k), 10, 3);
+      g.fill();
+      g.strokeStyle = 'rgba(255,255,255,0.35)';
+      g.lineWidth = 1;
+      g.beginPath();
+      g.moveTo(bx0 + 14 + (bw - 28) / 2, 36);
+      g.lineTo(bx0 + 14 + (bw - 28) / 2, 46);
+      g.stroke();
+    }
+  }
   // Breather countdown
-  if (snap.breather > 0) {
+  if (snap.breather > 0 && !snap.boss) {
     drawPanel(g, VIEW.w / 2 - 70, 12, 140, 32);
     g.font = `800 12px ${FONT_BODY}`;
     g.fillStyle = '#c9e6b8';
@@ -2979,7 +3324,8 @@ function drawGameOver(g, snap, dt, time) {
   const rows = gameOver.ranking.slice(0, 6);
   const pw = 760;
   const rowH = 34;
-  const ph = 162 + rows.length * rowH;
+  const teamLine = gameOver.teamBadges && gameOver.teamBadges.length ? 18 : 0;
+  const ph = 162 + teamLine + rows.length * rowH;
   const px = VIEW.w / 2 - pw / 2;
   const py = VIEW.h / 2 - ph / 2;
   g.save();
@@ -2988,17 +3334,22 @@ function drawGameOver(g, snap, dt, time) {
   drawPanel(g, px, py, pw, ph);
   g.textAlign = 'center';
   g.font = `900 30px ${FONT_TITLE}`;
-  g.fillStyle = '#ff8b8b';
-  g.shadowColor = '#d63d3d';
+  g.fillStyle = gameOver.won ? '#ffd27f' : '#ff8b8b';
+  g.shadowColor = gameOver.won ? '#e08b1f' : '#d63d3d';
   g.shadowBlur = 14;
-  g.fillText('Lišky ovládly les', VIEW.w / 2, py + 44);
+  g.fillText(gameOver.won ? 'Liščí matka poražena!' : 'Lišky ovládly les', VIEW.w / 2, py + 44);
   g.shadowBlur = 0;
   g.font = `700 13px ${FONT_BODY}`;
   g.fillStyle = '#f3ecd8';
-  g.fillText(`Došli jste do vlny ${gameOver.wave} a ulovili ${gameOver.kills} lišek.`, VIEW.w / 2, py + 68);
+  g.fillText(gameOver.won ? `Vyhráli jste kolo ve vlně ${gameOver.wave} s ${gameOver.kills} ulovenými liškami.` : `Došli jste do vlny ${gameOver.wave} a ulovili ${gameOver.kills} lišek.`, VIEW.w / 2, py + 68);
+  if (gameOver.teamBadges && gameOver.teamBadges.length) {
+    g.font = `700 12px ${FONT_BODY}`;
+    g.fillStyle = '#ffd27f';
+    g.fillText(`Týmové odznaky: ${gameOver.teamBadges.map((b) => `🏆 ${b}`).join('   ')}`, VIEW.w / 2, py + 86);
+  }
 
   const cols = { score: px + pw - 430, kills: px + pw - 370, survived: px + pw - 300, total: px + pw - 24 };
-  const hy = py + 94;
+  const hy = py + 94 + teamLine;
   g.font = `900 12px ${FONT_TITLE}`;
   g.fillStyle = '#ffd27f';
   g.textAlign = 'left';
@@ -3043,7 +3394,7 @@ function drawGameOver(g, snap, dt, time) {
   g.translate(VIEW.w / 2, py + ph - 18);
   const pulse = 1 + Math.sin(time * 4) * 0.03;
   g.scale(pulse, pulse);
-  tabText(g, `Nové kolo za ${snap.round.restartIn} s`, 0, 0, 'center');
+  tabText(g, `${gameOver.won ? 'Další les' : 'Nové kolo'} za ${snap.round.restartIn} s`, 0, 0, 'center');
   g.restore();
   g.restore();
 }
@@ -3104,14 +3455,30 @@ let lastFrame = performance.now();
 let frozenAt = 0;
 let leafTimer = 0;
 
-function interpolated(kind, alpha, dtSnap) {
-  const curr = currSnap.data[kind];
-  if (!prevSnap) return curr.map((e) => ({ ...e, rx: e.x, ry: e.y }));
-  const prevById = new Map(prevSnap.data[kind].map((e) => [e.id, e]));
+// Other entities are rendered at (latest server time - interpDelay) between the two snapshots
+// that bracket that moment, so jitter and lost packets do not turn into stutter.
+function interpolated(kind, renderNow) {
+  const latest = snapBuf[snapBuf.length - 1];
+  if (!latest) return [];
+  const renderSt = latest.st - interpDelay - (latest.at - renderNow);
+  let a = null;
+  let b = null;
+  for (let i = snapBuf.length - 1; i >= 0; i--) {
+    if (snapBuf[i].st <= renderSt) {
+      a = snapBuf[i];
+      b = snapBuf[i + 1] || null;
+      break;
+    }
+  }
+  if (!a) a = snapBuf[0];
+  const curr = (b || a).data[kind] || [];
+  if (!b) return curr.map((e) => ({ ...e, rx: e.x, ry: e.y }));
+  const alpha = clamp((renderSt - a.st) / Math.max(1, b.st - a.st), 0, 1);
+  const prevById = new Map((a.data[kind] || []).map((e) => [e.id, e]));
   return curr.map((e) => {
     const p = prevById.get(e.id);
     if (!p || Math.abs(p.x - e.x) > 300) return { ...e, rx: e.x, ry: e.y };
-    return { ...e, rx: lerp(p.x, e.x, alpha), ry: lerp(p.y, e.y, alpha), vy: e.vy ?? (e.y - p.y) / dtSnap };
+    return { ...e, rx: lerp(p.x, e.x, alpha), ry: lerp(p.y, e.y, alpha), vy: e.vy ?? ((e.y - p.y) * 1000) / Math.max(1, b.st - a.st) };
   });
 }
 
@@ -3148,16 +3515,10 @@ function frame(realNow) {
   const snap = currSnap.data;
   const weather = snap.weather ? snap.weather.kind : 'clear';
   const broken = new Set(snap.broken || []);
-  let alpha = 1;
-  let dtSnap = 0.05;
-  if (prevSnap) {
-    dtSnap = Math.max(0.001, (currSnap.at - prevSnap.at) / 1000);
-    alpha = clamp((now - currSnap.at) / (dtSnap * 1000), 0, 1);
-  }
 
-  const playersR = interpolated('players', alpha, dtSnap);
-  const foxesR = interpolated('foxes', alpha, dtSnap);
-  const bulletsR = interpolated('bullets', alpha, dtSnap);
+  const playersR = interpolated('players', now);
+  const foxesR = interpolated('foxes', now);
+  const bulletsR = interpolated('bullets', now);
   const me = playersR.find((p) => p.id === myId);
   if (me && predActive) {
     Object.assign(me, { rx: pred.x + renderOff.x, ry: pred.y + renderOff.y, vx: pred.vx, vy: pred.vy, onGround: pred.onGround, climbing: pred.climbing, facing: pred.facing, dash: pred.dashT > 0 });
@@ -3193,8 +3554,25 @@ function frame(realNow) {
   }
 
   shake = Math.max(0, shake - dt * 30);
-  const sx = shake ? rand(-shake, shake) : 0;
-  const sy = shake ? rand(-shake, shake) : 0;
+  const shakeAmt = settings.shake ? shake : 0;
+  const sx = shakeAmt ? rand(-shakeAmt, shakeAmt) : 0;
+  const sy = shakeAmt ? rand(-shakeAmt, shakeAmt) : 0;
+
+  // Auto quality: drop to the light renderer after 4 s under 40 FPS
+  if (settings.quality === 'auto') {
+    fpsLowFor = realDt > 1 / 40 ? fpsLowFor + realDt : 0;
+    if (fpsLowFor > 4 && !qualityLow) {
+      qualityLow = true;
+      addFeed('⚙️ Slabší výkon, přepínám na jednodušší grafiku (Esc: nastavení)', '#c9b3ff');
+    }
+  }
+
+  // Footprints in wet soil while it rains
+  markTimer -= dt;
+  if ((weather === 'rain' || weather === 'storm') && markTimer <= 0) {
+    markTimer = 0.25;
+    for (const p of playersR) if (p.alive && p.onGround && Math.abs(p.vx) > 10) addMark(p.rx + 15 + rand(-4, 4), S.groundBelow(world.platforms, p.rx, 30, p.ry + 48), 'print', p.facing);
+  }
 
   owlTimer -= dt;
   if (owlTimer <= 0 && !owl && weather === 'clear') {
@@ -3210,7 +3588,7 @@ function frame(realNow) {
   leafTimer -= dt;
   if (leafTimer <= 0) {
     spawnLeaf();
-    leafTimer = weather === 'storm' ? 0.06 : rand(0.15, 0.4);
+    leafTimer = (weather === 'storm' ? 0.06 : rand(0.15, 0.4)) / qMul();
   }
   updateRain(dt, weather);
   updateBodySounds(me, dt);
@@ -3269,7 +3647,7 @@ function frame(realNow) {
     }
     for (let k = 0; k < 3; k++) {
       const rr = ((r.t + k * 0.3) % 1.6) * 260;
-      ctx.strokeStyle = `rgba(217,180,74,${0.6 * (1 - rr / 260)})`;
+      ctx.strokeStyle = r.red ? `rgba(224,75,75,${0.6 * (1 - rr / 260)})` : `rgba(217,180,74,${0.6 * (1 - rr / 260)})`;
       ctx.lineWidth = 3;
       ctx.beginPath();
       ctx.arc(r.x - camX, r.y - camY, rr, 0, Math.PI * 2);
@@ -3338,7 +3716,7 @@ function frame(realNow) {
   }
 
   drawRain(ctx);
-  drawGroundFog(ctx, time, weather);
+  if (!qualityLow) drawGroundFog(ctx, time, weather);
 
   for (let i = dyingFoxes.length - 1; i >= 0; i--) {
     dyingFoxes[i].t += dt;
@@ -3348,7 +3726,8 @@ function frame(realNow) {
     flashes[i].t -= dt;
     if (flashes[i].t <= 0) flashes.splice(i, 1);
   }
-  drawLights(ctx, playersR);
+  if (qualityLow) fireGlows.length = 0;
+  else drawLights(ctx, playersR);
 
   if (weather === 'fog') {
     const fx = me ? me.rx + 15 - camX : CAM.w / 2;
@@ -3387,8 +3766,10 @@ function frame(realNow) {
 
   if (lightningFlash > 0) {
     lightningFlash = Math.max(0, lightningFlash - dt * 4);
-    ctx.fillStyle = `rgba(230,240,255,${0.75 * lightningFlash * lightningFlash})`;
-    ctx.fillRect(0, 0, VIEW.w, VIEW.h);
+    if (settings.flashes) {
+      ctx.fillStyle = `rgba(230,240,255,${0.75 * lightningFlash * lightningFlash})`;
+      ctx.fillRect(0, 0, VIEW.w, VIEW.h);
+    }
   }
 
   const vg = ctx.createRadialGradient(VIEW.w / 2, VIEW.h / 2, VIEW.h * 0.45, VIEW.w / 2, VIEW.h / 2, VIEW.w * 0.75);
@@ -3415,8 +3796,8 @@ function frame(realNow) {
   }
 
   const myRank = Math.max(0, [...snap.players].sort((a, b) => b.score - a.score).findIndex((p) => p.id === myId));
-  const targetSX = VIEW.w - 26;
-  const targetSY = 54 + myRank * 18;
+  const targetSX = VIEW.w - 26 * settings.hud;
+  const targetSY = (56 + myRank * 20) * settings.hud;
   for (let i = scoreFlyers.length - 1; i >= 0; i--) {
     const f = scoreFlyers[i];
     f.t += dt / 0.9;
@@ -3443,12 +3824,45 @@ function frame(realNow) {
   }
   scoreBump = Math.max(0, scoreBump - dt * 4);
 
-  drawHUD(ctx, me, snap, dt);
   drawGuideArrows(ctx, me, playersR, time);
+
+  // Picked-up crates fly into the HUD
+  for (let i = itemFlyers.length - 1; i >= 0; i--) {
+    const f = itemFlyers[i];
+    f.t += dt / 0.7;
+    if (f.t >= 1) {
+      itemFlyers.splice(i, 1);
+      denyT = Math.max(denyT, 0.15);
+      continue;
+    }
+    const k = easeOut(f.t);
+    const x = lerp((f.wx - camX) * ZOOM + sx, 40 * hudScale, k);
+    const y = lerp((f.wy - camY) * ZOOM + sy, 118 * hudScale, k) - Math.sin(f.t * Math.PI) * 50;
+    ctx.font = `900 ${Math.round(22 - k * 8)}px ${FONT_BODY}`;
+    ctx.textAlign = 'center';
+    ctx.fillStyle = f.color;
+    ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+    ctx.lineWidth = 3;
+    ctx.strokeText(f.icon, x, y);
+    ctx.fillText(f.icon, x, y);
+  }
+
+  // HUD layer: scaled from the corners so panels stay anchored
+  hudScale = settings.hud;
+  ctx.save();
+  ctx.scale(hudScale, hudScale);
+  const vw = VIEW.w;
+  const vh = VIEW.h;
+  VIEW.w = vw / hudScale;
+  VIEW.h = vh / hudScale;
+  drawHUD(ctx, me, snap, dt);
   drawMinimap(ctx, snap);
   drawBanner(ctx, dt);
   if (me && !me.alive) drawGhostHint(ctx, me, dt);
   drawGameOver(ctx, snap, dt, time);
+  VIEW.w = vw;
+  VIEW.h = vh;
+  ctx.restore();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
 
