@@ -28,7 +28,7 @@ const MEGA_EVERY = 3;
 const BULLET = { speed: 1000, life: 1.1, w: 10, h: 4 };
 const WEAPONS = {
   rifle:   { cooldown: 0.22, damage: 10, pellets: 1, spread: 0 },
-  shotgun: { cooldown: 0.5, damage: 8, pellets: 3, spread: 140, duration: 12 },
+  shotgun: { cooldown: 0.28, damage: 9, pellets: 3, spread: 140, duration: 12 },
   rapid:   { cooldown: 0.08, damage: 7, pellets: 1, spread: 0, duration: 10 },
 };
 const PICKUPS = {

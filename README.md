@@ -66,7 +66,8 @@ nahoře řada emotů.
 - **Oživení**: duch přiletí k živému lovci, ten se postaví, drží `E` a 3 s se
   nehýbe ani nestřílí. Duch se vrátí s 10 HP, oživující dostane 15 bodů.
 - **Vylepšení** padají z lišek (8 %, z mega lišky 60 %) a občas se objeví na
-  plošinách: lékárnička (+40 HP), brokovnice (3 broky, 12 s), rychlopalba
+  plošinách: lékárnička (+40 HP), brokovnice (3 broky po 9, skoro stejná
+  kadence jako puška, 12 s), rychlopalba
   (10 s), rychlé nohy (12 s).
 - **Střet střel**: když se kulky dvou lovců potkají, zruší se, zableskne a na
   zemi vzplane oheň na 6 s. Pálí lovce i lišky; lišky se mu vyhýbají.
