@@ -148,6 +148,8 @@ let chosenOutfit = -1;
 // ===========================================================================
 let audioCtx = null;
 let ambientStarted = false;
+let masterGain = null; // everything (effects, ambience, music) goes through here; M mutes it
+let soundOn = true;
 let rainNode = null;
 let footTimer = 0;
 let heartTimer = 0;
@@ -161,6 +163,11 @@ function ensureAudio() {
     }
   }
   if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  if (audioCtx && !masterGain) {
+    masterGain = audioCtx.createGain();
+    masterGain.gain.value = soundOn ? 1 : 0.0001;
+    masterGain.connect(audioCtx.destination);
+  }
   if (audioCtx && !ambientStarted) {
     ambientStarted = true;
     startAmbient();
@@ -188,7 +195,7 @@ function playTone({ type = 'square', from = 440, to = 220, dur = 0.1, gain = 0.0
   const g = audioCtx.createGain();
   g.gain.setValueAtTime(gain, t0);
   g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-  g.connect(audioCtx.destination);
+  g.connect(masterGain);
   if (noise) {
     const src = audioCtx.createBufferSource();
     src.buffer = noiseBuffer(dur, false);
@@ -225,7 +232,7 @@ function startAmbient() {
   lfo.start();
   const g = audioCtx.createGain();
   g.gain.value = 0.05;
-  src.connect(filter).connect(g).connect(audioCtx.destination);
+  src.connect(filter).connect(g).connect(masterGain);
   src.start();
 
   const cricket = () => {
@@ -257,7 +264,7 @@ function setRainSound(on) {
     const g = audioCtx.createGain();
     g.gain.setValueAtTime(0.0001, audioCtx.currentTime);
     g.gain.exponentialRampToValueAtTime(0.06, audioCtx.currentTime + 1.5);
-    src.connect(filter).connect(g).connect(audioCtx.destination);
+    src.connect(filter).connect(g).connect(masterGain);
     src.start();
     rainNode = { src, g };
   } else if (!on && rainNode) {
@@ -314,9 +321,9 @@ function startMusic() {
   if (!audioCtx || music.started) return;
   music.started = true;
   music.master = audioCtx.createGain();
-  music.master.gain.value = music.enabled ? 0.0001 : 0;
-  music.master.connect(audioCtx.destination);
-  if (music.enabled) music.master.gain.exponentialRampToValueAtTime(1, audioCtx.currentTime + 3);
+  music.master.gain.value = 0.0001;
+  music.master.connect(masterGain);
+  music.master.gain.exponentialRampToValueAtTime(1, audioCtx.currentTime + 3);
   music.padFilter = audioCtx.createBiquadFilter();
   music.padFilter.type = 'lowpass';
   music.padFilter.frequency.value = 500;
@@ -334,20 +341,24 @@ function startMusic() {
   music.timer = setInterval(scheduleMusic, 40);
 }
 
-function setMusic(on) {
-  music.enabled = on;
+function setSound(on) {
+  soundOn = on;
   try {
-    localStorage.setItem('hanka-music', on ? '1' : '0');
+    localStorage.setItem('hanka-sound', on ? '1' : '0');
   } catch {}
-  if (!music.master) return;
+  if (!masterGain) return;
   const t = audioCtx.currentTime;
-  music.master.gain.cancelScheduledValues(t);
-  music.master.gain.setValueAtTime(Math.max(0.0001, music.master.gain.value), t);
-  music.master.gain.exponentialRampToValueAtTime(on ? 1 : 0.0001, t + 1);
+  masterGain.gain.cancelScheduledValues(t);
+  masterGain.gain.setValueAtTime(Math.max(0.0001, masterGain.gain.value), t);
+  masterGain.gain.exponentialRampToValueAtTime(on ? 1 : 0.0001, t + 0.4);
 }
 
 function scheduleMusic() {
-  if (!audioCtx || !music.enabled) return;
+  if (!audioCtx) return;
+  if (!soundOn) {
+    music.nextTime = Math.max(music.nextTime, audioCtx.currentTime + 0.1);
+    return;
+  }
   // Ease intensity towards the target and derive tempo/brightness from it
   music.intensity += (music.target - music.intensity) * 0.05;
   const I = music.intensity;
@@ -518,8 +529,8 @@ window.addEventListener('keydown', (e) => {
   if (document.activeElement === nameInput) return;
   if (EMOTE_KEYS[e.code] && !e.repeat) send({ t: 'emote', n: EMOTE_KEYS[e.code] });
   if (e.code === 'KeyM' && !e.repeat) {
-    setMusic(!music.enabled);
-    addFeed(music.enabled ? '🎵 Hudba zapnuta' : '🔇 Hudba vypnuta (M)', '#c9b3ff');
+    setSound(!soundOn);
+    addFeed(soundOn ? '🔊 Zvuk zapnut' : '🔇 Zvuk vypnut (M)', '#c9b3ff');
   }
   const action = KEYMAP[e.code];
   if (!action) return;
@@ -855,7 +866,7 @@ nameInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') playBtn.click();
 });
 try {
-  music.enabled = localStorage.getItem('hanka-music') !== '0';
+  soundOn = localStorage.getItem('hanka-sound') !== '0';
   nameInput.value = localStorage.getItem('hanka-name') || '';
   myToken = localStorage.getItem('hanka-token') || null;
   const o = parseInt(localStorage.getItem('hanka-outfit'), 10);
@@ -2833,7 +2844,7 @@ function drawHUD(g, me, snap, dt) {
   g.textAlign = 'right';
   g.fillStyle = 'rgba(255,255,255,0.55)';
   g.font = `600 10px ${FONT_BODY}`;
-  tabText(g, `${music.enabled ? '♪' : '♪̸'} M · ${latency} ms`, VIEW.w - 14, VIEW.h - 10, 'right');
+  tabText(g, `${soundOn ? '🔊' : '🔇'} M · ${latency} ms`, VIEW.w - 14, VIEW.h - 10, 'right');
 }
 
 // Where is the ghost I should revive (or, as a ghost, the nearest living hunter)?

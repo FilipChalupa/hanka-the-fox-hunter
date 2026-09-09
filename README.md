@@ -43,7 +43,7 @@ a hrajete spolu.
 | Propad  | `S`/`↓` na plošině propadne skrz ni dolů |
 | Použít  | `Q` (past, roh, semínko, světluška, vnadidlo) |
 | Emoty   | `1` 👍, `2` 🆘, `3` 😂, `4` ❤️            |
-| Hudba   | `M` zapne/vypne (pamatuje se)             |
+| Zvuk    | `M` vypne/zapne všechny zvuky včetně hudby (pamatuje se) |
 | Duch    | `W`/`↑` nahoru, `S`/`↓` dolů             |
 
 Na dotykových zařízeních je vlevo virtuální joystick (pohyb, skok tahem
