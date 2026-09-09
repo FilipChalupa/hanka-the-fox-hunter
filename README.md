@@ -23,7 +23,8 @@ a hrajete spolu.
 | Skok    | `W`, `↑` nebo `Space`                    |
 | Střelba | `Ctrl`, `F`, `X` nebo levé tlačítko myši |
 
-Na dotykových zařízeních se zobrazí tlačítka na obrazovce.
+Na dotykových zařízeních se zobrazí tlačítka na obrazovce. Po smrti stačí
+`Space`, `Enter` nebo klik pro rychlý návrat (po první sekundě).
 
 ## Pravidla
 
@@ -32,6 +33,22 @@ Na dotykových zařízeních se zobrazí tlačítka na obrazovce.
 - Každých 12 ulovených lišek roste vlna: lišek je víc, jsou rychlejší a odolnější.
 - Po smrti se hráč za 3 s znovu objeví uprostřed lesa s krátkou nesmrtelností.
 - Dřevěné plošiny jsou průchozí zespodu (jde na ně vyskočit).
+- Každý hráč má jiný outfit: první v lese dostane mysliveckou zelenou, další
+  nejnižší volnou paletu z osmi. Outfit jde vybrat i ručně na úvodní obrazovce.
+- Odkaz `/?name=Jméno` přeskočí úvodní obrazovku a rovnou vstoupí do hry.
+
+## Grafika a UI
+
+- Kamera s přiblížením a předvídáním směru, minimapa s hráči a liškami.
+- Animace: dřep při dopadu, záklon ve skoku, zpětný ráz a záblesk pušky,
+  protažení lišky ve výskoku, cvakání čelistí, převrácení a rozplynutí po zásahu.
+- Živý les: kývající se stromy, padající listí, přízemní mlha, světlušky,
+  sova nad korunami, pařezy, kameny, houby a kapradí. Obloha s každou vlnou tmavne.
+- Osvětlení: halo kolem lovců, záblesky výstřelů, vinětace, červené bliknutí
+  při zranění, hit-stop a otřes kamery při zabití.
+- HUD z dřevěných cedulí (fonty Cinzel a Nunito), srdíčka místo HP pruhu,
+  „+10“ letící do žebříčku, oznámení nové vlny, obrazovka smrti se statistikami.
+- Ambientní zvuk: vítr, cvrčci a houkání sovy generované přes WebAudio.
 
 ## Struktura
 
@@ -42,6 +59,8 @@ Na dotykových zařízeních se zobrazí tlačítka na obrazovce.
 
 ## Protokol
 
-Klient → server: `{t:'join', name}`, `{t:'input', left, right, jump, shoot}`, `{t:'ping', ts}`
+Klient → server: `{t:'join', name, outfit?}`, `{t:'input', left, right, jump, shoot}`, `{t:'respawn'}`, `{t:'ping', ts}`
 
-Server → klient: `{t:'welcome', id, world, platforms}`, `{t:'state', players, foxes, bullets, events, wave, kills}`, `{t:'pong', ts}`
+Server → klient: `{t:'welcome', id, world, platforms}`, `{t:'state', players, foxes, bullets, events, wave, kills, maxFoxes}`, `{t:'pong', ts}`
+
+Události ve `state.events`: `shoot`, `hit`, `kill`, `hurt`, `bite`, `death`, `respawn`, `jump`, `foxjump`, `wave`, `join`, `leave`.
