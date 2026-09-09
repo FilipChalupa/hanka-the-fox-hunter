@@ -1,0 +1,37 @@
+# Production stack: the game behind Caddy, which obtains and renews an HTTPS certificate
+# automatically. Set DOMAIN to your public hostname (DNS A/AAAA record must point here).
+#
+#   DOMAIN=lisky.example.com docker compose up -d
+#
+services:
+  game:
+    build: .
+    restart: unless-stopped
+    environment:
+      - PORT=3000
+      - DATA_DIR=/app/data
+    volumes:
+      - game-data:/app/data
+    expose:
+      - "3000"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - game
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      - DOMAIN=${DOMAIN:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  game-data:
+  caddy-data:
+  caddy-config:

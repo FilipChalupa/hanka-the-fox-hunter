@@ -184,6 +184,20 @@
       font-family: var(--body); font-weight: 800; font-size: 0.76rem; box-shadow: 0 2px 0 #9c6a3a;
     }
     #status { margin-top: 8px; font-size: 0.85rem; color: #ffb3a7; min-height: 1.2em; }
+    .board {
+      display: flex; gap: 8px; margin-top: 12px;
+      background: rgba(0,0,0,0.28); border-radius: 8px; padding: 8px 10px;
+      text-align: left; font-size: 0.74rem;
+    }
+    .board .col { flex: 1; min-width: 0; }
+    .board h3 {
+      margin: 0 0 4px; font-family: var(--title); font-size: 0.72rem; color: var(--accent);
+      letter-spacing: 0.5px; white-space: nowrap;
+    }
+    .board ol { margin: 0; padding-left: 16px; line-height: 1.45; }
+    .board li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .board b { color: #fff; }
+    .board .empty { opacity: 0.6; font-style: italic; list-style: none; margin-left: -16px; }
 
     /* ---------- Touch controls ---------- */
     #touch { position: fixed; inset: 0; pointer-events: none; display: none; z-index: 5; }
@@ -236,6 +250,7 @@
     #tShoot { right: max(16px, env(safe-area-inset-right)); bottom: max(16px, env(safe-area-inset-bottom)); width: 84px; height: 84px; }
     #tJump { right: calc(max(16px, env(safe-area-inset-right)) + 100px); bottom: max(28px, env(safe-area-inset-bottom)); }
     #tRevive { right: max(16px, env(safe-area-inset-right)); bottom: calc(max(16px, env(safe-area-inset-bottom)) + 100px); width: 60px; height: 60px; font-size: 0.65rem; }
+    #tDash { right: calc(max(16px, env(safe-area-inset-right)) + 100px); bottom: calc(max(16px, env(safe-area-inset-bottom)) + 110px); width: 60px; height: 60px; font-size: 0.65rem; }
     #emotes {
       position: absolute;
       top: calc(max(8px, env(safe-area-inset-top)) + 52px);
@@ -262,6 +277,7 @@
     <div class="tbtn" id="tJump" data-key="jump"><span>⤒</span>skok</div>
     <div class="tbtn" id="tShoot" data-key="shoot"><span>✦</span>střelba</div>
     <div class="tbtn" id="tRevive" data-key="revive"><span>✚</span>oživit</div>
+    <div class="tbtn" id="tDash" data-key="dash"><span>»</span>úhyb</div>
     <div id="emotes">
       <button data-emote="1">👍</button>
       <button data-emote="2">🆘</button>
@@ -297,14 +313,21 @@
       <button id="play" class="play">Do lesa!</button>
       <div id="status"></div>
 
+      <div id="board" class="board" hidden>
+        <div class="col"><h3>Nejlepší kolo</h3><ol id="boardScore"></ol></div>
+        <div class="col"><h3>Nejvyšší vlna</h3><ol id="boardWave"></ol></div>
+        <div class="col"><h3>Nejvíc lišek</h3><ol id="boardKills"></ol></div>
+      </div>
+
       <div class="controls">
         <kbd>A</kbd>/<kbd>D</kbd> pohyb · <kbd>W</kbd>/<kbd>Space</kbd> skok · <kbd>Ctrl</kbd>/<kbd>F</kbd>/<kbd>X</kbd> střelba<br />
-        <kbd>E</kbd> drž u ducha 3 s = oživení (10 HP), přitom se nehýbej a nestřílej<br />
-        <kbd>1</kbd>–<kbd>4</kbd> emoty · duch létá <kbd>W</kbd>/<kbd>S</kbd> · pozor, kulky zraní i kamarády
+        <kbd>E</kbd> drž u ducha 3 s = oživení (10 HP) · <kbd>A A</kbd>/<kbd>D D</kbd> úhyb<br />
+        Světlé kmeny jde lézt: drž <kbd>W</kbd> ve výskoku · <kbd>1</kbd>–<kbd>4</kbd> emoty · kulky zraní i kamarády
       </div>
     </div>
   </div>
 
+  <script src="shared.js"></script>
   <script src="game.js"></script>
 </body>
 </html>

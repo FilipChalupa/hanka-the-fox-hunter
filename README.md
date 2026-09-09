@@ -10,7 +10,21 @@ AI lišek, střely) a klientům posílá snapshoty přes WebSockety.
 npm install
 npm start          # http://localhost:3000
 PORT=8080 npm start
+npm test           # testy herní logiky (node:test)
 ```
+
+Žebříček se ukládá do `data/leaderboard.json` (adresář jde změnit přes `DATA_DIR`).
+
+### Nasazení s HTTPS (Docker + Caddy)
+
+```bash
+DOMAIN=lisky.example.com docker compose up -d --build
+```
+
+Caddy si sám obstará certifikát od Let's Encrypt a přeposílá WebSockety na
+herní server. DNS záznam domény musí mířit na stroj, porty 80 a 443 musí být
+otevřené. Bez `DOMAIN` běží stack na `localhost` s vlastním certifikátem.
+Samotný server jde spustit i bez proxy: `docker build -t fox-hunter . && docker run -p 3000:3000 -v fox-data:/app/data fox-hunter`.
 
 Otevři adresu ve více oknech/prohlížečích (nebo na více počítačích v síti)
 a hrajete spolu.
@@ -23,6 +37,8 @@ a hrajete spolu.
 | Skok    | `W`, `↑` nebo `Space`                    |
 | Střelba | `Ctrl`, `F` nebo `X`                     |
 | Oživení | drž `E` vedle ducha (3 s, nehýbat se, nestřílet) |
+| Úhyb    | dvojité `A`/`D` (krátký sprint s nezranitelností, cooldown 1 s) |
+| Lezení  | drž `W` ve výskoku u světlého kmene, `S` u paty kmene; `W`/`S` leze, skok do strany seskočí |
 | Emoty   | `1` 👍, `2` 🆘, `3` 😂, `4` ❤️            |
 | Duch    | `W`/`↑` nahoru, `S`/`↓` dolů             |
 
@@ -53,7 +69,21 @@ nahoře řada emotů.
   (10 s), rychlé nohy (12 s).
 - **Střet střel**: když se kulky dvou lovců potkají, zruší se, zableskne a na
   zemi vzplane oheň na 6 s. Pálí lovce i lišky; lišky se mu vyhýbají.
-- Les (plošiny, stromy, dekorace) se generuje znovu každé kolo.
+- Les (plošiny, stromy, dekorace) se generuje znovu každé kolo. Světlé kmeny
+  s vruby jde lézt až do koruny, kam lišky nedosáhnou; v půlce kmene je větev.
+- **Liščí nory** na obou krajích mapy. Lišky vylézají jen z nich; když do nory
+  nastřílíš 80 poškození, zavalí se na 12 s a z ní nic nevyleze. Poškození se
+  bez střelby pomalu hojí.
+- **Noční události** (od 25. sekundy kola, každých 35–60 s na 20 s): mlha
+  (vidíš jen kolem sebe), déšť (ohně hasnou 3× rychleji), bouřka (déšť +
+  blesky, které osvítí les a občas trefí lišku za 25).
+- **Interaktivní prostředí**: střela přes kmen setřese listí, střela do houby ji
+  roztrhá, hráč stojící u pařezu je krytý před hrabavou liškou (ta vyleze vedle
+  a je 1,6 s omráčená).
+- **Odznaky za kolo**: Nejlepší střelec, Zachránce, Přežil nejdéle. Vedle pořadí
+  se ukazují i statistiky napříč koly (lišky / oživení / teamkilly).
+- **Rekonexe**: server drží tělo hráče 60 s po výpadku, klient se s tokenem
+  z localStorage připojí zpět ke stejnému hráči i skóre.
 - Dřevěné plošiny jsou průchozí zespodu (jde na ně vyskočit).
 - Každý hráč má jiný outfit: první v lese dostane mysliveckou zelenou, další
   nejnižší volnou paletu z osmi. Outfit jde vybrat i ručně na úvodní obrazovce.
@@ -74,18 +104,26 @@ nahoře řada emotů.
 
 ## Struktura
 
-- `server.js` – HTTP server pro statické soubory + WebSocket herní server
-  (60 Hz simulace, 20 Hz snapshoty).
-- `public/index.html` – úvodní obrazovka a dotykové ovládání.
-- `public/game.js` – vykreslování na Canvas, interpolace snapshotů, částice, zvuky.
+- `game/sim.js` – herní simulace (třída `Game`), bez sítě; 60 Hz tick.
+- `game/leaderboard.js` – persistentní žebříček v JSON.
+- `public/shared.js` – kód sdílený serverem i klientem: generování světa,
+  pohyb hráče (predikce na klientu), delta kódování snapshotů.
+- `server.js` – HTTP (statika, `/api/leaderboard`, `/api/status`, `/healthz`),
+  WebSockety, rekonexe tokenem, keyframe každých 5 s + delta snapshoty 20 Hz,
+  permessage-deflate.
+- `public/index.html` – úvodní obrazovka se žebříčkem a dotykové ovládání.
+- `public/game.js` – vykreslování na Canvas, predikce vlastního pohybu s
+  replayem vstupů, interpolace ostatních, částice, počasí, zvuky.
+- `test/sim.test.js` – scénářové testy (oživení, střet střel, nora, úhyb,
+  lezení, houby a listí, pařez, konec kola, rekonexe, delta snapshoty, blesky).
 
 ## Protokol
 
-Klient → server: `{t:'join', name, outfit?}`, `{t:'input', left, right, jump, down, shoot, revive}`, `{t:'emote', n}`, `{t:'ping', ts}`
+Klient → server: `{t:'join', name, outfit?, token?}`, `{t:'input', left, right, jump, down, shoot, revive, dash, seq}`, `{t:'emote', n}`, `{t:'ping', ts}`
 
-Server → klient: `{t:'welcome', id, world, platforms, seed}`, `{t:'state', players, foxes, bullets, pickups, fires, events, wave, kills, maxFoxes, round}`, `{t:'pong', ts}`
+Server → klient: `{t:'welcome', id, token, world, rejoined}`, `{t:'state', …}` (plný snapshot), `{t:'delta', …}` (jen změněné entity a pole; klient je skládá přes `Shared.applyDelta`), `{t:'pong', ts}`
 
-Události ve `state.events`: `shoot`, `hit`, `kill` (s `foxKind`, `mega`, `score`), `hurt`, `bite`, `death` (s `by` při friendly fire, `fire` při uhoření), `respawn`, `revived`, `ff`, `clash`, `pickup`, `emote`, `dig`, `emerge`, `jump`, `foxjump`, `wave`, `mega`, `gameover`, `newround` (s novými `platforms` a `seed`), `join`, `leave`.
+Události ve `state.events`: `shoot`, `hit`, `kill`, `hurt`, `bite`, `death`, `respawn`, `revived`, `ff`, `clash`, `pickup`, `emote`, `dig`, `emerge` (s `blocked` u pařezu), `jump`, `dash`, `grab`, `foxjump`, `foxspawn`, `denhit`, `dencollapse`, `denopen`, `leaves`, `mushroom`, `weather`, `lightning`, `wave`, `mega`, `gameover` (s `ranking` včetně `badges` a statistik), `newround` (s novým `world`), `join`, `leave`, `away`, `back`.
 
 ## Vykreslování
 
