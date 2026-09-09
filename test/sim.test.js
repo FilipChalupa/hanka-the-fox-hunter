@@ -564,3 +564,19 @@ test('down + jump on a one-way platform drops the hunter through it instead of j
   run(game, 0.2);
   assert.ok(a.y < y0 - 20, 'normal jump goes up');
 });
+
+test('clearing a wave gives a 5 s breather without spawns before the next wave starts', () => {
+  const game = mk();
+  game.addPlayer({ name: 'A' });
+  game.spawnTimer = 0.2;
+  game.totalKills = 12; // wave 2 reached
+  let events = run(game, 0.1);
+  assert.ok(events.some((e) => e.kind === 'wavedone' && e.wave === 1 && e.next === 2), 'wave done');
+  assert.ok(game.breather > 4.5);
+  events = run(game, 4);
+  assert.equal(events.filter((e) => e.kind === 'foxspawn').length, 0, 'no spawns during the breather');
+  assert.ok(!events.some((e) => e.kind === 'wave'));
+  events = run(game, 3);
+  assert.ok(events.some((e) => e.kind === 'wave' && e.wave === 2), 'next wave announced');
+  assert.ok(events.some((e) => e.kind === 'foxspawn'), 'spawning resumed');
+});

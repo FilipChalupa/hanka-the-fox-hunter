@@ -220,6 +220,14 @@
       font-family: var(--body); font-weight: 800; font-size: 0.76rem; box-shadow: 0 2px 0 #9c6a3a;
     }
     #status { margin-top: 8px; font-size: 0.85rem; color: #ffb3a7; min-height: 1.2em; }
+    .invite {
+      width: 100%; margin-top: 4px;
+      font-family: var(--body); font-weight: 800; font-size: 0.85rem;
+      padding: 8px; border: 2px solid #2b1708; border-radius: 8px;
+      background: rgba(0,0,0,0.25); color: var(--text); cursor: pointer;
+    }
+    .invite:hover { background: rgba(242,165,65,0.25); }
+    .invite.done { background: rgba(127,224,168,0.3); border-color: #7fe0a8; }
     .board {
       display: flex; gap: 8px; margin-top: 12px;
       background: rgba(0,0,0,0.28); border-radius: 8px; padding: 8px 10px;
@@ -355,6 +363,7 @@
 
       <button id="play" class="play">Do lesa!</button>
       <div id="status"></div>
+      <button id="invite" class="invite" type="button">🔗 Pozvat kamarády (zkopírovat odkaz)</button>
 
       <div id="board" class="board" hidden>
         <div class="col"><h3>Nejlepší kolo</h3><ol id="boardScore"></ol></div>

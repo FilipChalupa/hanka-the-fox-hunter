@@ -61,6 +61,18 @@ const rainDrops = [];
 const anims = new Map();
 const emoteBubbles = new Map();
 const hornRings = [];
+let denyT = 0; // HUD shake after a refused action
+let denyCooldown = 0;
+let rumbleT = 0;
+
+// "That does not work right now": a small shake, a quiet click and a short reason near the hunter.
+function deny(reason) {
+  if (denyCooldown > 0) return;
+  denyCooldown = 0.5;
+  denyT = 0.3;
+  SFX.click();
+  if (predActive) floatingTexts.push({ x: pred.x + 15, y: pred.y - 14, text: `✗ ${reason}`, color: '#ffb3a7', life: 0.7, size: 11 });
+}
 let shake = 0;
 let hitStop = 0;
 let hurtFlash = 0;
@@ -322,6 +334,14 @@ const SFX = {
     playTone({ type: 'square', from: 90, to: 40, dur: 0.6, gain: 0.08, delay: 0.1 });
   },
   pop: () => playTone({ type: 'sine', from: 900, to: 300, dur: 0.08, gain: 0.05 }),
+  click: () => playTone({ type: 'square', from: 900, to: 700, dur: 0.03, gain: 0.03 }),
+  rumble: () => playTone({ noise: true, from: 120, to: 60, dur: 0.35, gain: 0.05 }),
+  waveDone: () => {
+    playTone({ type: 'triangle', from: 523, to: 523, dur: 0.3, gain: 0.07 });
+    playTone({ type: 'triangle', from: 659, to: 659, dur: 0.3, gain: 0.07, delay: 0.15 });
+    playTone({ type: 'triangle', from: 784, to: 784, dur: 0.35, gain: 0.07, delay: 0.3 });
+    playTone({ type: 'triangle', from: 1047, to: 1047, dur: 0.8, gain: 0.08, delay: 0.5 });
+  },
 };
 
 // ===========================================================================
@@ -637,6 +657,16 @@ function predictStep(dt) {
   if (!predActive || !currSnap) return;
   if (gameOver) return;
   const inp = currentInput();
+  denyCooldown = Math.max(0, denyCooldown - dt);
+  if (pred.alive) {
+    if (inp.shoot && pred.climbing) deny('při lezení nejde střílet');
+    if (inp.use && (pred.dashT > 0 || pred.climbing)) deny('teď předmět nepoužiješ');
+    if (inp.revive && (inp.left || inp.right || inp.shoot || !pred.onGround)) {
+      const me = currSnap && serverMe(currSnap.data);
+      const ghostNear = me && currSnap.data.players.some((g) => !g.alive && g.on !== false && Math.abs(g.x - me.x) < 66 && Math.abs(g.y - me.y) < 84);
+      if (ghostNear) deny(inp.shoot ? 'při oživování nestřílej' : 'při oživování stůj');
+    }
+  }
   inputSeq++;
   inputHistory.push({ seq: inputSeq, inp: { ...inp }, dt });
   if (inputHistory.length > 240) inputHistory.shift();
@@ -698,6 +728,32 @@ try {
 updateOutfitLabel();
 nameInput.focus();
 
+// Invite: copy the game link (without the ?name auto-join) to the clipboard
+const inviteBtn = document.getElementById('invite');
+if (inviteBtn) {
+  inviteBtn.addEventListener('click', async () => {
+    const link = `${location.origin}${location.pathname}`;
+    let ok = false;
+    try {
+      await navigator.clipboard.writeText(link);
+      ok = true;
+    } catch {
+      try {
+        window.prompt('Zkopíruj odkaz:', link);
+        ok = true;
+      } catch {}
+    }
+    if (ok) {
+      inviteBtn.classList.add('done');
+      inviteBtn.textContent = '✅ Odkaz zkopírován, pošli ho kamarádům';
+      setTimeout(() => {
+        inviteBtn.classList.remove('done');
+        inviteBtn.textContent = '🔗 Pozvat kamarády (zkopírovat odkaz)';
+      }, 2500);
+    }
+  });
+}
+
 function fillBoard(listEl, rows, fmt) {
   listEl.innerHTML = '';
   if (!rows.length) {
@@ -758,8 +814,8 @@ function playerName(id) {
 }
 
 function addFeed(text, color = '#fff') {
-  feed.unshift({ text, color, life: 6 });
-  if (feed.length > 6) feed.pop();
+  feed.unshift({ text, color, life: 5 });
+  if (feed.length > 5) feed.pop();
 }
 
 function announce(title, sub, color = '#e8d9ff', glow = '#7a4fd1', maxT = 3.5) {
@@ -1039,6 +1095,11 @@ function handleEvents(events) {
         burst(ev.x, ev.y, 14, { colors: ['#ffffff', '#cfe6ff', '#ffe066'], minSpeed: 60, maxSpeed: 260, life: 0.5, up: 100, size: 3 });
         shake = Math.max(shake, 6);
         SFX.thunder();
+        break;
+      case 'wavedone':
+        announce(`Vlna ${ev.wave} hotová`, `${ev.breather} s klidu. Oživte kamarády, seberte bedýnky.`, '#c9e6b8', '#2f6b32', 3);
+        addFeed(`✅ Vlna ${ev.wave} hotová, ${ev.breather} s klidu`, '#c9e6b8');
+        SFX.waveDone();
         break;
       case 'wave':
         announce(`Vlna ${ev.wave}`, `Lišky zuří. Přichází jich až ${ev.maxFoxes}.`);
@@ -2132,6 +2193,15 @@ function drawMound(g, f, x, y, time) {
   const w = f.w || 48;
   const cx = x + w / 2;
   const gy = y + (f.h || 26);
+  // Furrow of broken soil left behind the tunnelling fox
+  g.strokeStyle = 'rgba(40,22,8,0.55)';
+  g.lineWidth = 3;
+  g.beginPath();
+  g.moveTo(cx - f.facing * 14, gy - 1);
+  for (let i = 1; i <= 6; i++) g.lineTo(cx - f.facing * (14 + i * 14), gy - 1 + Math.sin(time * 3 + i) * 1.5);
+  g.stroke();
+  g.fillStyle = 'rgba(90,58,31,0.8)';
+  for (let i = 1; i <= 5; i++) g.fillRect(cx - f.facing * (16 + i * 15), gy - 4 - (i % 2) * 2, 5, 3);
   g.fillStyle = '#5a3a1f';
   g.beginPath();
   g.ellipse(cx, gy - 2, w * 0.55, 9 + Math.sin(time * 20) * 1.5, 0, Math.PI, 0);
@@ -2501,6 +2571,9 @@ function drawHUD(g, me, snap, dt) {
     });
     if (me.item && PICKUP_INFO[me.item]) {
       const info = PICKUP_INFO[me.item];
+      const dx = denyT > 0 ? Math.sin(denyT * 60) * 4 : 0;
+      g.save();
+      g.translate(dx, 0);
       drawPanel(g, 12, 104, 320, 30);
       g.font = `800 12px ${FONT_BODY}`;
       g.textAlign = 'left';
@@ -2509,6 +2582,7 @@ function drawHUD(g, me, snap, dt) {
       g.fillStyle = '#f3ecd8';
       g.textAlign = 'right';
       g.fillText(`Q: ${info.hint}`, 320, 124);
+      g.restore();
     }
     const cd = clamp(1 - pred.dashCd / S.PLAYER.dashCooldown, 0, 1);
     g.fillStyle = 'rgba(0,0,0,0.35)';
@@ -2529,37 +2603,68 @@ function drawHUD(g, me, snap, dt) {
     tabText(g, `${info.icon} ${info.label} ${snap.weather.t}s`, 354, 33);
   }
 
+  // Team board: name, HP, what they hold, points
   const sorted = [...snap.players].sort((a, b) => b.score - a.score).slice(0, 8);
-  const boardH = 34 + sorted.length * 18;
-  const bx = VIEW.w - 232;
-  drawPanel(g, bx, 12, 220, boardH);
+  const rowH = 20;
+  const boardW = 264;
+  const boardH = 36 + sorted.length * rowH;
+  const bx = VIEW.w - boardW - 12;
+  drawPanel(g, bx, 12, boardW, boardH);
   g.font = `900 14px ${FONT_TITLE}`;
   g.fillStyle = '#ffd27f';
   g.textAlign = 'left';
   g.fillText('Lovci', bx + 14, 34);
   g.textAlign = 'right';
-  g.fillText('Body', bx + 206, 34);
-  g.font = `700 12px ${FONT_BODY}`;
+  g.fillText('Body', bx + boardW - 14, 34);
   sorted.forEach((p, i) => {
-    const yy = 54 + i * 18;
+    const yy = 56 + i * rowH;
     g.fillStyle = outfitOf(p).jacket;
     roundRect(g, bx + 14, yy - 10, 10, 10, 2);
     g.fill();
+    g.font = `700 12px ${FONT_BODY}`;
     g.fillStyle = p.id === myId ? '#ffd27f' : p.alive ? '#f3ecd8' : '#a08c78';
     g.textAlign = 'left';
-    const tag = !p.alive ? ' 👻' : p.on === false ? ' 📵' : p.weapon && p.weapon !== 'rifle' ? ` ${PICKUP_INFO[p.weapon].icon}` : '';
-    g.fillText(`${i + 1}. ${p.name}${tag}`, bx + 30, yy);
+    const name = p.name.length > 10 ? `${p.name.slice(0, 9)}…` : p.name;
+    g.fillText(`${name}${p.on === false ? ' 📵' : ''}`, bx + 30, yy);
+    // HP bar (ghosts show a ghost instead)
+    const hx = bx + 118;
+    if (p.alive) {
+      g.fillStyle = 'rgba(0,0,0,0.45)';
+      g.fillRect(hx, yy - 8, 44, 7);
+      g.fillStyle = p.hp > 40 ? '#5ad35a' : p.hp > 20 ? '#e0b43a' : '#e04b4b';
+      g.fillRect(hx, yy - 8, 44 * (p.hp / 100), 7);
+    } else {
+      g.font = `700 11px ${FONT_BODY}`;
+      g.fillStyle = '#dff3ff';
+      g.fillText('👻 duch', hx, yy);
+    }
+    // Held item / weapon / boosts as tiny icons
+    let ix = bx + 170;
+    const icons = [];
+    if (p.alive && p.weapon && p.weapon !== 'rifle') icons.push(PICKUP_INFO[p.weapon]);
+    if (p.alive && p.item && PICKUP_INFO[p.item]) icons.push(PICKUP_INFO[p.item]);
+    if (p.alive && p.disguiseT > 0) icons.push(PICKUP_INFO.disguise);
+    if (p.alive && p.stinkT > 0) icons.push(PICKUP_INFO.stink);
+    g.font = `900 11px ${FONT_BODY}`;
+    for (const ic of icons.slice(0, 3)) {
+      g.fillStyle = ic.color;
+      g.fillText(ic.icon, ix, yy);
+      ix += 14;
+    }
+    g.font = `700 12px ${FONT_BODY}`;
+    g.fillStyle = p.id === myId ? '#ffd27f' : p.alive ? '#f3ecd8' : '#a08c78';
     g.textAlign = 'right';
     if (p.id === myId) {
       g.save();
-      g.translate(bx + 206, yy);
+      g.translate(bx + boardW - 14, yy);
       g.scale(1 + scoreBump * 0.5, 1 + scoreBump * 0.5);
       tabText(g, `${scoreShown}`, 0, 0, 'right');
       g.restore();
-    } else tabText(g, `${p.score}`, bx + 206, yy, 'right');
+    } else tabText(g, `${p.score}`, bx + boardW - 14, yy, 'right');
   });
 
-  g.textAlign = 'left';
+  // Feed lives in the right column under the board, out of the minimap's way
+  g.textAlign = 'right';
   g.font = `700 12px ${FONT_BODY}`;
   for (let i = feed.length - 1; i >= 0; i--) {
     const f = feed[i];
@@ -2569,19 +2674,83 @@ function drawHUD(g, me, snap, dt) {
       continue;
     }
     g.globalAlpha = Math.min(1, f.life);
-    const yy = VIEW.h - 64 - i * 20;
+    const yy = 12 + boardH + 22 + i * 20;
+    const tw = g.measureText(f.text).width + 16;
     g.fillStyle = 'rgba(20,12,5,0.6)';
-    roundRect(g, 12, yy - 14, g.measureText(f.text).width + 16, 19, 4);
+    roundRect(g, VIEW.w - 12 - tw, yy - 14, tw, 19, 4);
     g.fill();
     g.fillStyle = f.color;
-    g.fillText(f.text, 20, yy);
+    g.fillText(f.text, VIEW.w - 20, yy);
   }
   g.globalAlpha = 1;
+  g.textAlign = 'left';
+
+  // Breather countdown
+  if (snap.breather > 0) {
+    drawPanel(g, VIEW.w / 2 - 70, 12, 140, 32);
+    g.font = `800 12px ${FONT_BODY}`;
+    g.fillStyle = '#c9e6b8';
+    g.textAlign = 'center';
+    tabText(g, `☕ klid ${snap.breather} s`, VIEW.w / 2, 33, 'center');
+  }
 
   g.textAlign = 'right';
   g.fillStyle = 'rgba(255,255,255,0.55)';
   g.font = `600 10px ${FONT_BODY}`;
   tabText(g, `${latency} ms`, VIEW.w - 14, VIEW.h - 10, 'right');
+}
+
+// Where is the ghost I should revive (or, as a ghost, the nearest living hunter)?
+function drawGuideArrows(g, me, playersR, time) {
+  if (!me || gameOver) return;
+  const targets = playersR.filter((p) => p.id !== myId && p.on !== false && (me.alive ? !p.alive : p.alive));
+  if (!targets.length) return;
+  let best = null;
+  let bestD = Infinity;
+  for (const p of targets) {
+    const d = Math.hypot(p.rx - me.rx, p.ry - me.ry);
+    if (d < bestD) {
+      bestD = d;
+      best = p;
+    }
+  }
+  if (bestD < 140) return;
+  // Screen position of the target; clamp to the edge when off screen
+  const sx = (best.rx + 15 - camX) * ZOOM;
+  const sy = (best.ry + 24 - camY) * ZOOM;
+  const margin = 46;
+  const onScreen = sx > margin && sx < VIEW.w - margin && sy > 110 && sy < VIEW.h - 70;
+  const ax = clamp(sx, margin, VIEW.w - margin);
+  const ay = clamp(sy, 110, VIEW.h - 70);
+  const ang = Math.atan2(sy - (me.ry + 24 - camY) * ZOOM, sx - (me.rx + 15 - camX) * ZOOM);
+  const bob = Math.sin(time * 4) * 3;
+  g.save();
+  g.globalAlpha = onScreen ? 0.75 : 0.95;
+  g.translate(ax, onScreen ? ay - 60 + bob : ay);
+  g.fillStyle = 'rgba(20,12,5,0.7)';
+  roundRect(g, -30, -14, 60, 28, 8);
+  g.fill();
+  g.strokeStyle = me.alive ? '#dff3ff' : '#ffd27f';
+  g.lineWidth = 1.5;
+  g.stroke();
+  g.font = `800 12px ${FONT_BODY}`;
+  g.textAlign = 'center';
+  g.fillStyle = me.alive ? '#dff3ff' : '#ffd27f';
+  g.fillText(`${me.alive ? '👻' : '🧑'} ${Math.round(bestD / 30)} m`, 0, 4);
+  // Arrow head pointing at the target
+  g.save();
+  g.translate(0, onScreen ? 22 : 0);
+  g.rotate(onScreen ? Math.PI / 2 : ang);
+  g.translate(onScreen ? 0 : 38, 0);
+  g.fillStyle = me.alive ? '#dff3ff' : '#ffd27f';
+  g.beginPath();
+  g.moveTo(8, 0);
+  g.lineTo(-4, -6);
+  g.lineTo(-4, 6);
+  g.closePath();
+  g.fill();
+  g.restore();
+  g.restore();
 }
 
 function drawBanner(g, dt) {
@@ -2881,6 +3050,27 @@ function frame(realNow) {
   }
   updateRain(dt, weather);
   updateBodySounds(me, dt);
+  denyT = Math.max(0, denyT - dt);
+
+  // A digger tunnelling close by: the ground trembles and the soil cracks open behind it
+  let nearestDig = Infinity;
+  if (me && me.alive) {
+    for (const f of foxesR) {
+      if (!f.dug) continue;
+      const d = Math.abs(f.rx + (f.w || 48) / 2 - (me.rx + 15));
+      if (d < nearestDig) nearestDig = d;
+    }
+  }
+  if (nearestDig < 260) {
+    const k = 1 - nearestDig / 260;
+    shake = Math.max(shake, 0.6 + k * 2.2);
+    rumbleT -= dt;
+    if (rumbleT <= 0) {
+      rumbleT = 0.5;
+      SFX.rumble();
+      if (nearestDig < 120) buzz(30);
+    }
+  }
 
   ctx.save();
   ctx.scale(ZOOM, ZOOM);
@@ -3089,6 +3279,7 @@ function frame(realNow) {
   scoreBump = Math.max(0, scoreBump - dt * 4);
 
   drawHUD(ctx, me, snap, dt);
+  drawGuideArrows(ctx, me, playersR, time);
   drawMinimap(ctx, snap);
   drawBanner(ctx, dt);
   if (me && !me.alive) drawGhostHint(ctx, me, dt);

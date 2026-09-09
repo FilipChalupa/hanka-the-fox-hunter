@@ -65,6 +65,7 @@ const MUSHROOM_BOX = (d) => ({ x: d.x - 8, y: WORLD.groundY - 26, w: 16, h: 26 }
 const STUMP_HALF = 24;
 const FOX_AI = { giveUpAfter: 2.5, roamMove: [1.5, 3.5], roamPause: [0.8, 2.0] };
 const ROUND_RESTART = 12;
+const WAVE_BREATHER = 5; // seconds of calm after a wave is cleared
 
 const rand = (a, b) => a + Math.random() * (b - a);
 
@@ -97,6 +98,7 @@ class Game {
     this.pickupTimer = 10;
     this.time = 0;
     this.announcedWave = 1;
+    this.breather = 0;
     this.round = { number: 1, over: false, restartTimer: 0 };
     this.weather = { kind: 'clear', t: 0 };
     this.weatherTimer = rand(WEATHER.gap[0], WEATHER.gap[1]);
@@ -499,6 +501,7 @@ class Game {
     this.burning.clear();
     this.totalKills = 0;
     this.announcedWave = 1;
+    this.breather = 0;
     this.spawnTimer = 3;
     this.pickupTimer = 10;
     this.weather = { kind: 'clear', t: 0 };
@@ -1176,14 +1179,25 @@ class Game {
     if (this.time - this.roundStartedAt > 25) this.updateWeather(dt);
 
     const wave = this.wave;
-    if (wave !== this.announcedWave) {
-      this.announcedWave = wave;
-      this.push({ kind: 'wave', wave, maxFoxes: this.maxFoxes });
-      if (wave % MEGA_EVERY === 0) {
-        const count = Math.ceil(wave / (MEGA_EVERY * 2));
-        for (let i = 0; i < count; i++) this.spawnFox('mega');
-        this.push({ kind: 'mega', count, wave });
+    if (wave !== this.announcedWave && this.breather <= 0) {
+      // Wave cleared: a short breather with no spawns, then the next wave is announced.
+      this.breather = WAVE_BREATHER;
+      this.push({ kind: 'wavedone', wave: this.announcedWave, next: wave, breather: WAVE_BREATHER });
+    }
+    if (this.breather > 0) {
+      this.breather -= dt;
+      if (this.breather <= 0) {
+        this.breather = 0;
+        this.announcedWave = wave;
+        this.push({ kind: 'wave', wave, maxFoxes: this.maxFoxes });
+        if (wave % MEGA_EVERY === 0) {
+          const count = Math.ceil(wave / (MEGA_EVERY * 2));
+          for (let i = 0; i < count; i++) this.spawnFox('mega');
+          this.push({ kind: 'mega', count, wave });
+        }
+        this.spawnTimer = 1;
       }
+      return;
     }
     this.spawnTimer -= dt;
     if (this.spawnTimer <= 0 && this.foxes.size < this.maxFoxes) {
@@ -1201,6 +1215,7 @@ class Game {
       kills: this.totalKills,
       maxFoxes: this.maxFoxes,
       round: { number: this.round.number, over: this.round.over, restartIn: Math.max(0, Math.ceil(this.round.restartTimer)) },
+      breather: Math.max(0, Math.ceil(this.breather)),
       weather: { kind: this.weather.kind, t: Math.ceil(this.weather.t) },
       dens: this.dens.map((d) => ({ id: d.id, collapsed: d.collapsed, dmg: Math.round((d.damage / DEN.hp) * 100) / 100, t: Math.ceil(d.timer) })),
       broken: [...this.broken],
