@@ -3707,7 +3707,7 @@ function drawGameOver(g, snap, dt, time) {
   g.fillStyle = 'rgba(243,236,216,0.7)';
   g.fillText('lišky / oživení / teamkilly (kolo)', cols.total, hy + 12);
   rows.forEach((r, i) => {
-    const yy = py + 130 + i * rowH;
+    const yy = py + 130 + teamLine + i * rowH;
     g.fillStyle = outfitOf(r).jacket;
     roundRect(g, px + 22, yy - 10, 10, 10, 2);
     g.fill();
