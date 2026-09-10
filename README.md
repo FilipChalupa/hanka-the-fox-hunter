@@ -119,6 +119,19 @@ ovládání pod ním; nainstalovaná aplikace se otevře na šířku.
   se jí drží u boku. Dokud je některé do 150 px, nic jí neublíží. Mláďata
   slyší vnadidlo a světlušku ze 700 px a rozběhnou se k nim; ztracená mláďata
   dorůstají každých 10 s. Její smrt kolo vyhraje.
+- **Jména**: mega lišky a Matka dostanou jméno (Rezka, Zrzka, Ohnivka…). Objeví
+  se ve feedu, na pruhu HP i v osobním odznaku „Složil(a) Rezku“.
+- **Doupě**: kde padne první Matka, zůstane její doupě. Kdo v něm 2 s drží E,
+  vyhrabe tři vzácné bedýnky, uzdraví se o 25, dostane 40 bodů a odznak.
+- **Trofeje**: úvodní obrazovka ukazuje 💀 za každou poraženou Matku a 🏆 za
+  vyhrané kolo, s datem v popisku.
+- **Divák**: odkaz `/?watch=1` otevře les bez lovce. Kamera sleduje
+  automaticky toho, kolem koho je nejvíc lišek; ← → přepíná lovce, mezerník
+  vrátí automatiku. Hodí se na streamování nebo pro rodiče.
+- **Duch odhaluje**: duch, který vteřinu zůstane nad živým lovcem, mu na 5 s
+  ukáže lišky pod zemí (8 s prodleva na lovce).
+- **Přístupnost**: menu je dialog s pastí fokusu a návratem fokusu, tlačítka
+  mají popisky, feed a přehled na Tab se hlásí čtečce přes živé oblasti.
 - **Replay**: po smrti klávesa R (na mobilu klepnutí do hry) přehraje
   posledních 10 s z bufferu snapshotů, s kamerou na tobě.
 - **Hod a chycení**: házející lovec se napřáhne, chytající natáhne ruku;

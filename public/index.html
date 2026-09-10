@@ -287,6 +287,19 @@
     .invite-row { display: flex; gap: 6px; margin-top: 4px; }
     .invite-row .invite { margin-top: 0; flex: 1; }
     .invite-row .share { width: 46px; flex: none; font-size: 1rem; padding: 6px; }
+    .sr-only {
+      position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+      clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+    }
+    canvas#game:focus { outline: none; }
+    .trophies { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px; justify-content: center; }
+    .trophy {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 30px; height: 30px; border-radius: 8px; font-size: 1rem;
+      background: rgba(0,0,0,0.3); border: 1px solid rgba(242,165,65,0.45);
+    }
+    .trophy.elder { border-color: #ffd27f; background: rgba(255,210,127,0.18); }
+    .trophy.more { font-size: 0.7rem; font-weight: 800; }
     .profile {
       margin-top: 10px; font-size: 0.78rem; text-align: center;
       background: rgba(127,224,168,0.12); border: 1px solid rgba(127,224,168,0.35); border-radius: 8px; padding: 6px 10px;
@@ -382,13 +395,15 @@
   </style>
 </head>
 <body>
-  <div id="wrap"><canvas id="game" width="960" height="540"></canvas></div>
+  <div id="wrap"><canvas id="game" width="960" height="540" tabindex="0" role="img" aria-label="Herní plocha: noční les s lovci a liškami. Textový přehled dění je hlášen čtečce průběžně."></canvas></div>
+  <div id="sr" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+  <div id="srOverview" class="sr-only" aria-live="assertive" aria-atomic="true"></div>
   <div id="rotateHint">Na šířku uvidíš víc lesa.</div>
-  <button id="menuBtn" type="button" title="Nastavení (Esc)">⚙️</button>
-  <button id="infoBtn" type="button" title="Přehled bedýnek a hráčů (Tab)">❔</button>
-  <div id="menu" hidden>
+  <button id="menuBtn" type="button" title="Nastavení (Esc)" aria-label="Nastavení (Esc)">⚙️</button>
+  <button id="infoBtn" type="button" title="Přehled bedýnek a hráčů (Tab)" aria-label="Přehled bedýnek a hráčů (Tab)" aria-pressed="false">❔</button>
+  <div id="menu" hidden role="dialog" aria-modal="true" aria-labelledby="menuTitle">
     <div class="menu-card">
-      <h2>Nastavení</h2>
+      <h2 id="menuTitle">Nastavení</h2>
       <label>Efekty <input id="setSfx" type="range" min="0" max="1" step="0.05" /></label>
       <label>Hudba <input id="setMusic" type="range" min="0" max="1" step="0.05" /></label>
       <label class="check"><input id="setShake" type="checkbox" /> Otřesy kamery</label>
@@ -408,15 +423,15 @@
       </div>
     </div>
   </div>
-  <button id="fs" type="button" title="Celá obrazovka (F11). V celé obrazovce Chrome nezavře kartu na Ctrl+W.">⛶</button>
+  <button id="fs" type="button" title="Celá obrazovka (F11). V celé obrazovce Chrome nezavře kartu na Ctrl+W." aria-label="Celá obrazovka (F11)">⛶</button>
 
   <div id="touch">
-    <div id="joy"><div id="knob"></div></div>
-    <div class="tbtn" id="tJump" data-key="jump"><span>⤒</span>skok</div>
-    <div class="tbtn" id="tShoot" data-key="shoot"><span>✦</span>střelba</div>
-    <div class="tbtn" id="tRevive" data-key="revive"><span>✚</span>oživit</div>
-    <div class="tbtn" id="tDash" data-key="dash"><span>»</span>úhyb</div>
-    <div class="tbtn" id="tUse" data-key="use"><span>✋</span>použít</div>
+    <div id="joy" role="slider" aria-label="Joystick: doleva, doprava, dolů"><div id="knob"></div></div>
+    <div class="tbtn" id="tJump" data-key="jump" role="button" aria-label="Skok"><span aria-hidden="true">⤒</span>skok</div>
+    <div class="tbtn" id="tShoot" data-key="shoot" role="button" aria-label="Střelba"><span aria-hidden="true">✦</span>střelba</div>
+    <div class="tbtn" id="tRevive" data-key="revive" role="button" aria-label="Oživit ducha"><span aria-hidden="true">✚</span>oživit</div>
+    <div class="tbtn" id="tDash" data-key="dash" role="button" aria-label="Úhyb"><span aria-hidden="true">»</span>úhyb</div>
+    <div class="tbtn" id="tUse" data-key="use" role="button" aria-label="Použít předmět, podržením hodit"><span aria-hidden="true">✋</span>použít</div>
     <div id="emotes">
       <button data-emote="1">👍</button>
       <button data-emote="2">🆘</button>
@@ -457,6 +472,7 @@
       </div>
 
       <div id="profile" class="profile" hidden></div>
+      <div id="trophies" class="trophies" hidden aria-label="Trofeje za poražené bossy"></div>
       <div id="board" class="board" hidden>
         <div class="col"><h3>Nejlepší kolo</h3><ol id="boardScore"></ol></div>
         <div class="col"><h3>Nejvyšší vlna</h3><ol id="boardWave"></ol></div>

@@ -92,6 +92,10 @@ const itemFlyers = []; // picked-up crate icons flying into the HUD
 const captions = []; // sound captions {text, t}
 let overviewOpen = false; // Tab: crates and players
 let replayClip = null; // last ~10 s before my death
+let spectator = false; // ?watch=1: no hunter, just a camera
+let watchIdx = -1; // -1 = automatic
+let srTimer = 0;
+const srQueue = [];
 let replay = null; // { frames, t0, dur, t }
 let shieldTextT = 0;
 let readySent = false;
@@ -99,7 +103,7 @@ let tipIndex = 0;
 let tipTimer = 0;
 
 // Profile: statistics across sessions, kept in this browser
-const profile = { rounds: 0, wins: 0, revives: 0, kills: 0, bestWave: 0, bestScore: 0 };
+const profile = { rounds: 0, wins: 0, revives: 0, kills: 0, bestWave: 0, bestScore: 0, trophies: [] };
 try {
   Object.assign(profile, JSON.parse(localStorage.getItem('hanka-profile') || '{}'));
 } catch {}
@@ -118,6 +122,36 @@ function renderProfile() {
   }
   el.hidden = false;
   el.textContent = `Tvoje statistiky: ${profile.rounds} kol · ${profile.wins} výher · ${profile.kills} lišek · ${profile.revives} oživení · nejvyšší vlna ${profile.bestWave} · nejvíc bodů ${profile.bestScore}`;
+  const tr = document.getElementById('trophies');
+  if (tr) {
+    tr.innerHTML = '';
+    const list = profile.trophies || [];
+    tr.hidden = list.length === 0;
+    for (const t of list.slice(-24)) {
+      const sp = document.createElement('span');
+      sp.className = `trophy ${t.kind}`;
+      sp.textContent = t.kind === 'elder' ? '🏆' : '💀';
+      sp.title = `${t.kind === 'elder' ? 'Matka s mláďaty' : 'Liščí matka'}${t.name ? ` ${t.name}` : ''} · ${new Date(t.date).toLocaleDateString('cs-CZ')}`;
+      sp.setAttribute('aria-label', sp.title);
+      tr.appendChild(sp);
+    }
+    if (list.length > 24) {
+      const more = document.createElement('span');
+      more.className = 'trophy more';
+      more.textContent = `+${list.length - 24}`;
+      tr.appendChild(more);
+    }
+  }
+}
+function addTrophy(kind, name) {
+  profile.trophies = profile.trophies || [];
+  profile.trophies.push({ kind, name: name || '', date: Date.now() });
+  saveProfile();
+}
+
+// Screen reader mirror: feed lines and opened overlays go to an aria-live region, throttled
+function announceSr(text) {
+  srQueue.push(text);
 }
 renderProfile();
 
@@ -229,7 +263,7 @@ const CAPTIONS = {
   howl: 'vytí Liščí matky', dig: 'liška se zahrabává', emerge: 'liška vyskočila zpod země', horn: 'lovecký roh', boss: 'řev Liščí matky',
   bossphase: 'řev Liščí matky', lightning: 'hrom', stomp: 'dupnutí', dencollapse: 'nora se zavalila', denopen: 'lišky prohrabaly noru', mega: 'mega liška',
   clash: 'střet střel', treefire: 'strom vzplál', treeburnt: 'strom shořel', wavedone: 'vlna hotová', curse: 'prokletí', trap: 'past sklapla',
-  bossdown: 'Liščí matka padla', cubborn: 'kňučení mláděte', victory: 'vítězná fanfára',
+  bossdown: 'Liščí matka padla', cubborn: 'kňučení mláděte', victory: 'vítězná fanfára', lairopen: 'hrabání v doupěti', reveal: 'šepot ducha',
 };
 const WEATHER_INFO = {
   clear: { label: '', icon: '' },
@@ -662,7 +696,7 @@ function currentInput() {
 }
 
 function sendInput(force) {
-  if (!myId) return;
+  if (!myId || spectator) return;
   const key = `${input.left}${input.right}${input.jump}${input.shoot}${input.down}${input.revive}${pendingDash}${pendingUse}${pendingThrow}`;
   const now = performance.now();
   if (!force && key === lastInputKey && now - lastInputSent < 50) return;
@@ -679,12 +713,22 @@ window.addEventListener('keydown', (e) => {
   if (document.activeElement === nameInput || menuOpen || capturing) return;
   if (e.code === 'Tab') {
     e.preventDefault();
+    if (!overviewOpen) openOverviewSr();
     overviewOpen = true;
     return;
   }
   if (e.code === 'KeyR' && !e.repeat) {
     if (replay) replay = null;
     else startReplay();
+    return;
+  }
+  if (spectator) {
+    if (e.code === 'ArrowLeft' || e.code === 'ArrowRight' || e.code === 'KeyA' || e.code === 'KeyD') {
+      const n = currSnap ? currSnap.data.players.length : 0;
+      if (n) watchIdx = ((watchIdx + (e.code === 'ArrowRight' || e.code === 'KeyD' ? 1 : -1)) % (n + 1) + (n + 1)) % (n + 1) - 1;
+    }
+    if (e.code === 'Space') watchIdx = -1;
+    e.preventDefault();
     return;
   }
   if (e.code === 'Enter' && gameOver) {
@@ -765,10 +809,33 @@ function startReplay() {
   replay = { frames: replayClip, t0: replayClip[0].st, dur: replayClip[replayClip.length - 1].st - replayClip[0].st, t: 0 };
 }
 const infoBtn = document.getElementById('infoBtn');
-if (infoBtn) infoBtn.addEventListener('pointerdown', (e) => {
-  e.preventDefault();
-  overviewOpen = !overviewOpen;
-});
+if (infoBtn) {
+  const toggleOverview = () => {
+    overviewOpen = !overviewOpen;
+    infoBtn.setAttribute('aria-pressed', String(overviewOpen));
+    if (overviewOpen) openOverviewSr();
+  };
+  infoBtn.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    toggleOverview();
+  });
+  infoBtn.addEventListener('keydown', (e) => {
+    if (e.code === 'Enter' || e.code === 'Space') {
+      e.preventDefault();
+      toggleOverview();
+    }
+  });
+}
+
+// Text version of the Tab overview for screen readers
+function openOverviewSr() {
+  const sr = document.getElementById('srOverview');
+  if (!sr || !currSnap) return;
+  const snap = currSnap.data;
+  const crates = Object.values(PICKUP_INFO).map((i) => `${i.label}: ${i.desc} Od vlny ${i.wave}${i.wave > snap.wave ? ', zatím zamčeno' : ''}.`).join(' ');
+  const hunters = snap.players.map((p) => `${p.name}: ${p.alive ? `${p.hp} HP` : 'duch'}, ${p.score} bodů, ${p.kills} lišek, ${p.roundRevives || 0} oživení.`).join(' ');
+  sr.textContent = `Přehled. Vlna ${snap.wave}. Bedýnky: ${crates} Lovci: ${hunters}`;
+}
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
 // Accidental Ctrl+W / tab close while playing: ask first (the browser shows its own dialog).
@@ -918,7 +985,8 @@ function connect(name) {
   myName = name;
 
   ws.addEventListener('open', () => {
-    send({ t: 'join', name, outfit: chosenOutfit >= 0 ? chosenOutfit : undefined, token: myToken || undefined });
+    if (spectator) send({ t: 'join', watch: true });
+    else send({ t: 'join', name, outfit: chosenOutfit >= 0 ? chosenOutfit : undefined, token: myToken || undefined });
   });
 
   ws.addEventListener('message', (ev) => {
@@ -945,10 +1013,15 @@ function connect(name) {
         }
       }
       myId = msg.id;
-      myToken = msg.token;
-      try {
-        localStorage.setItem('hanka-token', myToken);
-      } catch {}
+      if (msg.spectator) {
+        spectator = true;
+        myId = 0;
+      } else {
+        myToken = msg.token;
+        try {
+          localStorage.setItem('hanka-token', myToken);
+        } catch {}
+      }
       world = msg.world;
       buildScenery(world.seed);
       camInit = false;
@@ -959,7 +1032,7 @@ function connect(name) {
       wantReconnect = true;
       reconnectTries = 0;
       lastInputKey = '';
-      addFeed(msg.rejoined ? `Vítej zpět, ${msg.name}! Tvoje tělo tu na tebe počkalo.` : `Vítej v lese, ${msg.name}!`, '#ffd27f');
+      addFeed(spectator ? '👁 Sleduješ les jako divák. ← → přepíná lovce, mezerník: automaticky.' : msg.rejoined ? `Vítej zpět, ${msg.name}! Tvoje tělo tu na tebe počkalo.` : `Vítej v lese, ${msg.name}!`, '#ffd27f');
     } else if (msg.t === 'state' || msg.t === 'delta') {
       const data = msg.t === 'state' ? msg : currSnap ? S.applyDelta(currSnap.data, msg) : null;
       if (!data) return;
@@ -986,7 +1059,7 @@ function connect(name) {
   });
 
   ws.addEventListener('close', () => {
-    const hadId = myId;
+    const hadId = myId || spectator;
     myId = 0;
     prevSnap = currSnap = null;
     snapBuf.length = 0;
@@ -1167,12 +1240,18 @@ function renderKeys() {
     box.appendChild(row);
   }
 }
+let menuReturnFocus = null;
 function toggleMenu(open) {
   menuOpen = open;
   if (!menuEl) return;
   menuEl.hidden = !open;
   if (open) {
+    menuReturnFocus = document.activeElement;
     for (const k in input) input[k] = false;
+    setTimeout(() => {
+      const first = menuEl.querySelector('input, select, button');
+      if (first) first.focus();
+    }, 0);
     document.getElementById('setSfx').value = settings.sfx;
     document.getElementById('setMusic').value = settings.musicVol;
     document.getElementById('setShake').checked = settings.shake;
@@ -1181,7 +1260,28 @@ function toggleMenu(open) {
     document.getElementById('setHud').value = String(settings.hud);
     document.getElementById('setQuality').value = settings.quality;
     renderKeys();
-  } else capturing = null;
+  } else {
+    capturing = null;
+    if (menuReturnFocus && menuReturnFocus.focus) menuReturnFocus.focus();
+    else canvas.focus();
+  }
+}
+// Keep keyboard focus inside the open menu
+if (menuEl) {
+  menuEl.addEventListener('keydown', (e) => {
+    if (e.code !== 'Tab') return;
+    const items = [...menuEl.querySelectorAll('input, select, button')].filter((el) => !el.disabled);
+    if (!items.length) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  });
 }
 if (menuEl) {
   document.getElementById('setSfx').addEventListener('input', (e) => {
@@ -1332,6 +1432,13 @@ if (urlName) {
   nameInput.value = urlName;
   playBtn.click();
 }
+if (new URLSearchParams(location.search).get('watch')) {
+  // Spectator link: no hunter, straight into the forest with a camera
+  spectator = true;
+  ensureAudio();
+  wantReconnect = true;
+  connect('divák');
+}
 if (document.fonts && document.fonts.load) {
   document.fonts.load(`900 20px ${FONT_TITLE}`);
   document.fonts.load(`800 14px ${FONT_BODY}`);
@@ -1355,6 +1462,7 @@ function playerName(id) {
 function addFeed(text, color = '#fff') {
   feed.unshift({ text, color, life: 5 });
   if (feed.length > 5) feed.pop();
+  announceSr(text);
 }
 
 function announce(title, sub, color = '#e8d9ff', glow = '#7a4fd1', maxT = 3.5) {
@@ -1588,7 +1696,8 @@ function handleEvents(events) {
         }
         if (ev.mega) {
           flashes.push({ x: ev.x, y: ev.y, r: 260, t: 0.5, maxT: 0.5, color: '255,120,60' });
-          addFeed(`💥 ${ev.by ? playerName(ev.by) : 'Někdo'} složil(a) MEGA lišku!`, '#ffb347');
+          addFeed(`💥 ${ev.by ? playerName(ev.by) : 'Někdo'} složil(a) mega lišku${ev.nameAcc ? ` ${ev.nameAcc}` : ''}!`, '#ffb347');
+          if (ev.by === myId && ev.nameAcc) floatingTexts.push({ x: ev.x, y: ev.y - 50, text: `Zabil(a) jsi ${ev.nameAcc}`, color: '#ffd27f', life: 1.6, size: 15 });
         }
         SFX.kill();
         break;
@@ -1707,18 +1816,21 @@ function handleEvents(events) {
         SFX.wave();
         break;
       }
-      case 'boss':
+      case 'boss': {
+        const fox = currSnap && currSnap.data.foxes.find((f) => f.id === ev.id);
+        const nm = fox && fox.name ? fox.name : '';
         if (ev.elder) {
-          announce('Matka s mláďaty', 'Dokud jsou mláďata u ní, nic jí neublíží. Odlákej je vnadidlem.', '#ffb347', '#d63d3d', 6);
-          addFeed('🐺 Matka se vrátila s mláďaty. Odlákejte je!', '#ff8b8b');
+          announce(nm ? `${nm} s mláďaty` : 'Matka s mláďaty', 'Dokud jsou mláďata u ní, nic jí neublíží. Odlákej je vnadidlem.', '#ffb347', '#d63d3d', 6);
+          addFeed(`🐺 ${nm || 'Matka'} se vrátila s mláďaty. Odlákejte je!`, '#ff8b8b');
         } else {
-          announce('Liščí matka', 'Přišla si pro vás. Nejdřív bojuje sama.', '#ffb347', '#d63d3d', 5);
-          addFeed('🐺 Liščí matka vylezla z nory!', '#ff8b8b');
+          announce(nm ? `Liščí matka ${nm}` : 'Liščí matka', 'Přišla si pro vás. Nejdřív bojuje sama.', '#ffb347', '#d63d3d', 5);
+          addFeed(`🐺 Liščí matka ${nm} vylezla z nory!`, '#ff8b8b');
         }
         shake = Math.max(shake, 14);
         lightningFlash = 0.4;
         SFX.roar();
         break;
+      }
       case 'bossphase':
         announce('Druhá fáze', 'Matka volá smečku z nor!', '#ff8b8b', '#d63d3d', 4);
         shake = Math.max(shake, 10);
@@ -1737,8 +1849,9 @@ function handleEvents(events) {
         SFX.rubble();
         break;
       case 'bossdown':
-        announce('Liščí matka padla!', `${ev.breather} s klidu. Les jde dál, ve vlně 20 se vrátí s mláďaty.`, '#ffd27f', '#e08b1f', 5);
-        addFeed(`🏆 ${ev.by ? playerName(ev.by) : 'Někdo'} složil(a) Liščí matku!`, '#ffd27f');
+        announce(`${ev.name || 'Liščí matka'} padla!`, `${ev.breather} s klidu. Její doupě zůstalo v lese, prohledej ho (drž E).`, '#ffd27f', '#e08b1f', 5);
+        addFeed(`🏆 ${ev.by ? playerName(ev.by) : 'Někdo'} složil(a) Liščí matku${ev.nameAcc ? ` ${ev.nameAcc}` : ''}!`, '#ffd27f');
+        addTrophy('mother', ev.name);
         for (let i = 0; i < 4; i++) burst(camX + rand(0, CAM.w), camY + rand(0, CAM.h * 0.5), 10, { colors: ['#ffd27f', '#ffffff', '#ff8c42'], minSpeed: 30, maxSpeed: 160, life: 1.8, size: 5, gravity: 120, round: true });
         SFX.fanfare();
         break;
@@ -1756,6 +1869,7 @@ function handleEvents(events) {
       case 'victory':
         gameOver = { ranking: ev.ranking, teamBadges: ev.teamBadges || [], wave: ev.wave, kills: ev.kills, won: true, t: 0 };
         recordRoundInProfile(ev, true);
+        addTrophy('elder', '');
         announce('Vítězství!', 'Matka i mláďata jsou pryč. Les je zase váš.', '#ffd27f', '#e08b1f', 5);
         for (let i = 0; i < 6; i++) burst(camX + rand(0, CAM.w), camY + rand(0, CAM.h * 0.5), 12, { colors: ['#ffd27f', '#ffffff', '#7fe0a8', '#ff8c42'], minSpeed: 30, maxSpeed: 180, life: 2, size: 5, gravity: 120, round: true });
         SFX.fanfare();
@@ -1773,11 +1887,27 @@ function handleEvents(events) {
           SFX.empty();
         }
         break;
-      case 'mega':
-        announce(ev.count > 1 ? `${ev.count}× MEGA LIŠKA!` : 'MEGA LIŠKA!', 'Země se třese. Schovej se, nebo střílej.', '#ffb347', '#d63d3d', 4);
-        addFeed(`🔥 Přichází ${ev.count > 1 ? ev.count + ' mega lišky' : 'mega liška'}!`, '#ffb347');
+      case 'mega': {
+        const names = (currSnap ? currSnap.data.foxes.filter((f) => f.mega && f.name).map((f) => f.name) : []).slice(-ev.count);
+        announce(ev.count > 1 ? `${ev.count}× MEGA LIŠKA!` : `MEGA LIŠKA${names[0] ? ` ${names[0].toUpperCase()}` : ''}!`, names.length ? `Přichází ${names.join(' a ')}. Schovej se, nebo střílej.` : 'Země se třese. Schovej se, nebo střílej.', '#ffb347', '#d63d3d', 4);
+        addFeed(`🔥 Přichází ${ev.count > 1 ? ev.count + ' mega lišky' : 'mega liška'}${names.length ? ` (${names.join(', ')})` : ''}!`, '#ffb347');
         shake = Math.max(shake, 10);
         playTone({ type: 'sawtooth', from: 120, to: 40, dur: 0.9, gain: 0.12 });
+        break;
+      }
+      case 'lairopen':
+        burst(ev.x, ev.y, 30, { colors: ['#6b4726', '#3b2a1a', '#ffd27f', '#e8dcc0'], minSpeed: 60, maxSpeed: 260, life: 0.9, up: 200, size: 6 });
+        flashes.push({ x: ev.x, y: ev.y - 20, r: 200, t: 0.6, maxT: 0.6, color: '255,220,150' });
+        addFeed(`🦴 ${playerName(ev.id)} vykradl(a) doupě${ev.name ? ` po ${ev.name.slice(0, -1)}e` : ''}: kořist létá ven!`, '#ffd27f');
+        shake = Math.max(shake, 6);
+        SFX.pickup();
+        break;
+      case 'reveal':
+        if (ev.id === myId) {
+          addFeed(`👻 ${ev.byName} ti na 5 s odhalil(a) lišky pod zemí`, '#dff3ff');
+          floatingTexts.push({ x: ev.x, y: ev.y - 50, text: 'vidíš pod zem', color: '#dff3ff', life: 1.2, size: 13 });
+        } else if (ev.by === myId) floatingTexts.push({ x: ev.x, y: ev.y - 50, text: `odhaleno pro ${ev.name}`, color: '#dff3ff', life: 1.2, size: 12 });
+        burst(ev.x, ev.y + 20, 10, { colors: ['#dff3ff', '#8fd1ff'], minSpeed: 20, maxSpeed: 90, life: 0.6, gravity: -50, round: true });
         break;
       case 'gameover':
         gameOver = { ranking: ev.ranking, teamBadges: ev.teamBadges || [], wave: ev.wave, kills: ev.kills, won: false, t: 0 };
@@ -2918,6 +3048,71 @@ function drawFoxSprite(g, opts) {
   g.restore();
 }
 
+function drawLair(g, lair, time, me) {
+  const x = lair.x - camX;
+  const y = lair.y - camY;
+  if (x + lair.w < -80 || x > CAM.w + 80) return;
+  const cx = x + lair.w / 2;
+  const bottom = y + lair.h;
+  // A bigger, older burrow than the dens: roots, bones, a faint glow inside until it is dug out
+  g.fillStyle = '#3d2a18';
+  g.beginPath();
+  g.ellipse(cx, bottom, lair.w / 2 + 16, lair.h, 0, Math.PI, 0);
+  g.fill();
+  g.fillStyle = '#4c9a3f';
+  g.beginPath();
+  g.ellipse(cx, bottom - lair.h + 6, lair.w / 2 - 8, 7, 0, Math.PI, 0);
+  g.fill();
+  g.strokeStyle = '#2b1708';
+  g.lineWidth = 3;
+  g.beginPath();
+  g.moveTo(cx - 30, bottom - 30);
+  g.quadraticCurveTo(cx - 44, bottom - 14, cx - 52, bottom + 2);
+  g.moveTo(cx + 28, bottom - 34);
+  g.quadraticCurveTo(cx + 46, bottom - 16, cx + 50, bottom + 2);
+  g.stroke();
+  g.fillStyle = '#120a04';
+  g.beginPath();
+  g.ellipse(cx, bottom - 4, 30, 26, 0, Math.PI, 0);
+  g.fill();
+  if (!lair.opened) {
+    const glow = 0.25 + 0.15 * Math.sin(time * 3);
+    g.fillStyle = `rgba(255,210,127,${glow})`;
+    g.beginPath();
+    g.ellipse(cx, bottom - 10, 16, 10, 0, 0, Math.PI * 2);
+    g.fill();
+    fireGlows.push({ x: lair.x + lair.w / 2, y: lair.y + lair.h - 12, r: 120, a: 0.18 + 0.08 * Math.sin(time * 3) });
+    if (lair.k > 0) {
+      g.strokeStyle = 'rgba(0,0,0,0.5)';
+      g.lineWidth = 5;
+      g.beginPath();
+      g.arc(cx, y - 14, 14, 0, Math.PI * 2);
+      g.stroke();
+      g.strokeStyle = '#ffd27f';
+      g.lineWidth = 4;
+      g.beginPath();
+      g.arc(cx, y - 14, 14, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * lair.k);
+      g.stroke();
+    }
+  } else {
+    // Dug out: loose earth and a couple of picked bones
+    g.fillStyle = '#6b4726';
+    g.fillRect(cx - 36, bottom - 8, 20, 6);
+    g.fillRect(cx + 14, bottom - 10, 24, 6);
+  }
+  g.fillStyle = '#e8dcc0';
+  g.fillRect(cx - 24, bottom - 6, 12, 3);
+  g.fillRect(cx + 8, bottom - 5, 10, 3);
+  g.beginPath();
+  g.arc(cx - 26, bottom - 5, 2.5, 0, Math.PI * 2);
+  g.arc(cx + 20, bottom - 4, 2.5, 0, Math.PI * 2);
+  g.fill();
+  g.font = `800 9px ${FONT_BODY}`;
+  g.textAlign = 'center';
+  g.fillStyle = 'rgba(255,210,127,0.85)';
+  g.fillText(lair.opened ? 'vybrané doupě' : `doupě${lair.name ? ` po ${lair.name.slice(0, -1)}e` : ''}`, cx, y - 24);
+}
+
 function drawMound(g, f, x, y, time) {
   const w = f.w || 48;
   const cx = x + w / 2;
@@ -3007,7 +3202,7 @@ function drawFox(g, f, x, y, time) {
       g.font = `900 9px ${FONT_TITLE}`;
       g.textAlign = 'center';
       g.fillStyle = '#ffb347';
-      g.fillText('MEGA', x + w / 2, y - 16);
+      g.fillText(f.name ? `MEGA · ${f.name}` : 'MEGA', x + w / 2, y - 16);
     }
   }
 }
@@ -3254,6 +3449,10 @@ function drawMinimap(g, snap) {
   g.strokeStyle = 'rgba(255,255,255,0.35)';
   g.lineWidth = 1;
   g.strokeRect(ix + camX * sx, iy + camY * sy, CAM.w * sx, CAM.h * sy);
+  if (snap.lair) {
+    g.fillStyle = snap.lair.opened ? '#8a5a30' : '#ffd27f';
+    g.fillRect(ix + snap.lair.x * sx, iy + snap.lair.y * sy - 1, 5, 4);
+  }
   for (const pk of snap.pickups || []) {
     g.fillStyle = (PICKUP_INFO[pk.kind] || PICKUP_INFO.medkit).color;
     g.fillRect(ix + pk.x * sx - 1.5, iy + pk.y * sy - 1.5, 3, 3);
@@ -3290,11 +3489,17 @@ function drawHUD(g, me, snap, dt) {
   g.fillStyle = '#c9e6b8';
   tabText(g, `Ulov. ${snap.kills}`, 196, 54);
   const hp = me ? me.hp : 0;
-  for (let i = 0; i < 5; i++) drawHeart(g, 34 + i * 22, 74, 1.7, clamp((hp - i * 20) / 20, 0, 1));
-  g.fillStyle = '#f3ecd8';
-  g.font = `800 11px ${FONT_BODY}`;
-  tabText(g, `${hp}`, 150, 78);
-  if (me && me.alive) {
+  if (spectator) {
+    g.font = `800 12px ${FONT_BODY}`;
+    g.fillStyle = '#dff3ff';
+    g.fillText(`👁 Divák${me ? ` · sleduješ ${me.name}` : ''}${watchIdx < 0 ? ' (auto)' : ''}`, 24, 78);
+  } else {
+    for (let i = 0; i < 5; i++) drawHeart(g, 34 + i * 22, 74, 1.7, clamp((hp - i * 20) / 20, 0, 1));
+    g.fillStyle = '#f3ecd8';
+    g.font = `800 11px ${FONT_BODY}`;
+    tabText(g, `${hp}`, 150, 78);
+  }
+  if (me && me.alive && !spectator) {
     const items = [];
     if (me.weapon && me.weapon !== 'rifle') items.push({ info: PICKUP_INFO[me.weapon], t: me.ammo });
     if (me.speedT > 0) items.push({ info: PICKUP_INFO.speed, t: me.speedT });
@@ -3325,6 +3530,15 @@ function drawHUD(g, me, snap, dt) {
       g.textAlign = 'right';
       g.fillText(`Q: ${info.hint} · drž Q: hodit`, 320, 124);
       g.restore();
+    }
+    if (me.reveal > 0) {
+      g.fillStyle = 'rgba(0,0,0,0.35)';
+      roundRect(g, 232, 86, 96, 16, 4);
+      g.fill();
+      g.font = `800 10px ${FONT_BODY}`;
+      g.fillStyle = '#dff3ff';
+      g.textAlign = 'left';
+      tabText(g, `👁 pod zem ${me.reveal} s`, 238, 98);
     }
     const cd = clamp(1 - pred.dashCd / S.PLAYER.dashCooldown, 0, 1);
     g.fillStyle = 'rgba(0,0,0,0.35)';
@@ -3437,7 +3651,7 @@ function drawHUD(g, me, snap, dt) {
       g.font = `900 13px ${FONT_TITLE}`;
       g.textAlign = 'left';
       g.fillStyle = '#ff8b8b';
-      g.fillText(snap.boss.elder ? 'Matka s mláďaty' : 'Liščí matka', bx0 + 14, 30);
+      g.fillText(`${snap.boss.elder ? 'Matka s mláďaty' : 'Liščí matka'}${boss.name ? ` · ${boss.name}` : ''}`, bx0 + 14, 30);
       g.textAlign = 'right';
       g.font = `700 11px ${FONT_BODY}`;
       g.fillStyle = snap.boss.shielded ? '#8fd1ff' : '#f3ecd8';
@@ -4028,8 +4242,24 @@ function frame(realNow) {
   const playersR = replay ? interpAt(replay.frames, 'players', replaySt) : interpolated('players', now);
   const foxesR = replay ? interpAt(replay.frames, 'foxes', replaySt) : interpolated('foxes', now);
   const bulletsR = replay ? interpAt(replay.frames, 'bullets', replaySt) : interpolated('bullets', now);
-  const me = playersR.find((p) => p.id === myId);
-  if (me && predActive && !replay) {
+  let me = playersR.find((p) => p.id === myId);
+  if (spectator) {
+    // Camera for the spectator: a chosen hunter, or automatically the one in the thick of it
+    let target = null;
+    if (watchIdx >= 0 && playersR[watchIdx]) target = playersR[watchIdx];
+    else {
+      let best = -1;
+      for (const p of playersR) {
+        const score = (p.alive ? 100 : 0) + foxesR.filter((f) => Math.abs(f.rx - p.rx) < 400).length;
+        if (score > best) {
+          best = score;
+          target = p;
+        }
+      }
+    }
+    me = target ? { ...target, spectated: true } : null;
+  }
+  if (me && predActive && !replay && !spectator) {
     Object.assign(me, { rx: pred.x + renderOff.x, ry: pred.y + renderOff.y, vx: pred.vx, vy: pred.vy, onGround: pred.onGround, climbing: pred.climbing, facing: pred.facing, dash: pred.dashT > 0 });
   }
 
@@ -4103,9 +4333,15 @@ function frame(realNow) {
     leafTimer = (weather === 'storm' ? 0.06 : rand(0.15, 0.4)) / qMul();
   }
   updateRain(dt, weather);
-  if (!replay) updateBodySounds(me, dt);
+  if (!replay && !spectator) updateBodySounds(me, dt);
   updateMusicIntensity(snap, me, foxesR);
   denyT = Math.max(0, denyT - dt);
+  srTimer -= dt;
+  if (srTimer <= 0 && srQueue.length) {
+    srTimer = 2.5;
+    const sr = document.getElementById('sr');
+    if (sr) sr.textContent = srQueue.splice(0, 3).join('. ');
+  }
 
   // A digger tunnelling close by: the ground trembles and the soil cracks open behind it
   let nearestDig = Infinity;
@@ -4133,6 +4369,7 @@ function frame(realNow) {
   ctx.translate(sx / ZOOM, sy / ZOOM);
 
   drawBackground(ctx, time, snap.wave, weather);
+  if (snap.lair) drawLair(ctx, snap.lair, time, me);
   const burningById = new Map((snap.burning || []).map((b) => [b.id, b]));
   for (const t of world.trunks) drawTrunk(ctx, t, time, burningById.get(t.id));
   for (const sp of snap.saplings || []) drawSapling(ctx, sp, time);
@@ -4145,6 +4382,21 @@ function frame(realNow) {
   for (const b of bulletsR) drawBullet(ctx, b, b.rx - camX, b.ry - camY);
   for (const d of dyingFoxes) drawDyingFox(ctx, d);
   for (const f of foxesR) drawFox(ctx, f, f.rx - camX, f.ry - camY, time);
+  if (me && me.alive && me.reveal > 0) {
+    // Revealed by a ghost: underground foxes show through the soil
+    for (const f of foxesR) {
+      if (!f.dug) continue;
+      ctx.save();
+      ctx.globalAlpha = 0.45 + 0.2 * Math.sin(time * 6);
+      ctx.translate(f.rx - camX + (f.w || 48) / 2, f.ry - camY + (f.h || 26));
+      drawFoxSprite(ctx, { facing: f.facing, run: Math.sin(time * 12), kind: f.kind, time });
+      ctx.restore();
+      ctx.font = `900 14px ${FONT_BODY}`;
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#dff3ff';
+      ctx.fillText('!', f.rx - camX + (f.w || 48) / 2, f.ry - camY - 8 + Math.sin(time * 8) * 3);
+    }
+  }
   for (const p of playersR) {
     if (p.alive) drawHunter(ctx, p, p.rx - camX, p.ry - camY, time, p.id === myId);
     else drawGhost(ctx, p, p.rx - camX, p.ry - camY, time, p.id === myId);
@@ -4168,7 +4420,28 @@ function frame(realNow) {
     }
   }
 
-  if (me && me.alive) {
+  if (me && !me.alive && !spectator && !replay) {
+    // Ghost hovering above a hunter: tell them why to stay
+    const host = playersR.find((q) => q.alive && q.id !== myId && Math.abs(q.rx - me.rx) < 46 && q.ry - (me.ry + 48) > -10 && q.ry - (me.ry + 48) < 130);
+    if (host) {
+      ctx.font = `700 10px ${FONT_BODY}`;
+      ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(223,243,255,0.85)';
+      ctx.fillText(host.reveal > 0 ? `${host.name} vidí pod zem` : `zůstaň nad ${host.name}: odhalíš lišky pod zemí`, me.rx + 15 - camX, me.ry - camY - 30);
+    }
+  }
+  if (me && me.alive && !spectator) {
+    if (snap.lair && !snap.lair.opened && me.rx + 30 > snap.lair.x && me.rx < snap.lair.x + snap.lair.w && Math.abs(me.ry + 48 - (snap.lair.y + snap.lair.h)) < 20) {
+      ctx.font = `800 11px ${FONT_BODY}`;
+      ctx.textAlign = 'center';
+      const text = snap.lair.k > 0 ? `Prohledávám doupě… ${Math.round(snap.lair.k * 100)} %` : 'Drž E: prohledat doupě';
+      const w = ctx.measureText(text).width + 14;
+      ctx.fillStyle = 'rgba(20,12,5,0.7)';
+      roundRect(ctx, me.rx + 15 - camX - w / 2, me.ry - camY - 76, w, 18, 4);
+      ctx.fill();
+      ctx.fillStyle = '#ffd27f';
+      ctx.fillText(text, me.rx + 15 - camX, me.ry - camY - 63);
+    }
     const near = playersR.find((g) => !g.alive && g.on !== false && Math.abs(g.rx - me.rx) < 66 && Math.abs(g.ry - me.ry) < 84);
     if (near) {
       ctx.font = `800 11px ${FONT_BODY}`;
@@ -4337,7 +4610,7 @@ function frame(realNow) {
   }
   scoreBump = Math.max(0, scoreBump - dt * 4);
 
-  drawGuideArrows(ctx, me, playersR, time);
+  if (!spectator) drawGuideArrows(ctx, me, playersR, time);
 
   // Picked-up crates fly into the HUD
   for (let i = itemFlyers.length - 1; i >= 0; i--) {
@@ -4369,11 +4642,11 @@ function frame(realNow) {
   VIEW.w = vw / hudScale;
   VIEW.h = vh / hudScale;
   drawHUD(ctx, me, snap, dt);
-  if (me && me.alive && !gameOver && !overviewOpen && !replay) drawTutorial(ctx, dt);
+  if (me && me.alive && !gameOver && !overviewOpen && !replay && !spectator) drawTutorial(ctx, dt);
   drawMinimap(ctx, snap);
   drawCaptions(ctx, dt);
   drawBanner(ctx, dt);
-  if (me && !me.alive && !replay) drawGhostHint(ctx, me, dt);
+  if (me && !me.alive && !replay && !spectator) drawGhostHint(ctx, me, dt);
   if (replay) drawReplayBar(ctx);
   drawGameOver(ctx, snap, dt, time);
   drawOverview(ctx, snap);
