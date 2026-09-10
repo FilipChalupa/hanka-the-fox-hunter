@@ -113,8 +113,16 @@ ovládání pod ním; nainstalovaná aplikace se otevře na šířku.
 - **Liščí matka**: ve vlně 10 vyleze z nory boss. V první fázi bojuje sama a
   jiné lišky nepřicházejí; pod polovinou HP zavyje a každých 6 s přivolá tři
   lišky z nor. Dopad po skoku omráčí lovce na zemi do 170 px za 15. Nevšímá si
-  smradu, návnad ani pastí. Její porážka kolo vyhraje: tým dostane odznak, les
-  se vygeneruje znovu.
+  smradu, návnad ani pastí. Její porážka kolo nekončí: tým dostane odznak,
+  8 s klidu a les jede dál.
+- **Matka s mláďaty**: ve vlně 20 se vrátí s 900+ HP a čtyřmi mláďaty, která
+  se jí drží u boku. Dokud je některé do 150 px, nic jí neublíží. Mláďata
+  slyší vnadidlo a světlušku ze 700 px a rozběhnou se k nim; ztracená mláďata
+  dorůstají každých 10 s. Její smrt kolo vyhraje.
+- **Replay**: po smrti klávesa R (na mobilu klepnutí do hry) přehraje
+  posledních 10 s z bufferu snapshotů, s kamerou na tobě.
+- **Hod a chycení**: házející lovec se napřáhne, chytající natáhne ruku;
+  chycení bedýnky ve vzduchu ohlásí feed.
 - **Odemykání bedýnek**: druhy vylepšení přibývají s vlnou (1: lékárnička,
   brokovnice; 2: rychlopalba, rychlé nohy; 3: smrad, past, vnadidlo; 4: zápalné
   náboje, roh, prokletí; 5: dvojité body, světluška; 6: převlek, semínko).
@@ -182,7 +190,9 @@ Události ve `state.events`: `shoot`, `hit`, `kill`, `hurt`, `bite`, `death`, `r
 
 - `/metrics` vrací metriky ve formátu Prometheus: hráči online, lišky, vlna,
   kolo, doba ticku (průměr a maximum), velikost plných a delta snapshotů,
-  počet snapshotů, dokončená a vyhraná kola, uptime, verze protokolu.
+  počet snapshotů, dokončená a vyhraná kola, uptime, verze protokolu, a
+  histogramy dosažené vlny za kolo a počtu hráčů v kole (ukládají se do
+  `data/telemetry.json`, takže přežijí restart).
 - `/api/status` totéž zkráceně v JSON, `/healthz` pro health check.
 - `welcome` nese verzi protokolu (`Shared.PROTOCOL`). Klient se starým skriptem
   se jednou sám znovu načte s parametrem `v`. Skripty a HTML se servírují

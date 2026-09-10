@@ -91,6 +91,9 @@ const hornRings = [];
 const itemFlyers = []; // picked-up crate icons flying into the HUD
 const captions = []; // sound captions {text, t}
 let overviewOpen = false; // Tab: crates and players
+let replayClip = null; // last ~10 s before my death
+let replay = null; // { frames, t0, dur, t }
+let shieldTextT = 0;
 let readySent = false;
 let tipIndex = 0;
 let tipTimer = 0;
@@ -218,11 +221,15 @@ const TIPS = [
   'Ve vlně 10 přijde Liščí matka. Její porážka kolo vyhraje.',
   'Bedýnky se odemykají s vlnou. Na Tab uvidíš, co už je k mání.',
   'Nízké HP je slyšet: tep srdce a dech. Hledej lékárničku.',
+  'Po smrti stiskni R: přehraje se posledních 10 s, jak tě to dostalo.',
+  'Ve vlně 20 se Matka vrátí s mláďaty. Dokud jsou u ní, nic jí neublíží. Odlákej je vnadidlem.',
+  'Mláďata slyší vnadidlo a světlušku z dálky. Polož je stranou a střílej na Matku.',
 ];
 const CAPTIONS = {
   howl: 'vytí Liščí matky', dig: 'liška se zahrabává', emerge: 'liška vyskočila zpod země', horn: 'lovecký roh', boss: 'řev Liščí matky',
   bossphase: 'řev Liščí matky', lightning: 'hrom', stomp: 'dupnutí', dencollapse: 'nora se zavalila', denopen: 'lišky prohrabaly noru', mega: 'mega liška',
   clash: 'střet střel', treefire: 'strom vzplál', treeburnt: 'strom shořel', wavedone: 'vlna hotová', curse: 'prokletí', trap: 'past sklapla',
+  bossdown: 'Liščí matka padla', cubborn: 'kňučení mláděte', victory: 'vítězná fanfára',
 };
 const WEATHER_INFO = {
   clear: { label: '', icon: '' },
@@ -675,6 +682,11 @@ window.addEventListener('keydown', (e) => {
     overviewOpen = true;
     return;
   }
+  if (e.code === 'KeyR' && !e.repeat) {
+    if (replay) replay = null;
+    else startReplay();
+    return;
+  }
   if (e.code === 'Enter' && gameOver) {
     e.preventDefault();
     sendReady();
@@ -742,7 +754,16 @@ window.addEventListener('blur', () => {
 canvas.addEventListener('mousedown', () => ensureAudio());
 canvas.addEventListener('pointerdown', () => {
   if (gameOver) sendReady();
+  else if (replay) replay = null;
+  else if (replayClip && currSnap && !(serverMe(currSnap.data) || {}).alive && document.body.classList.contains('touch')) startReplay();
 });
+
+function startReplay() {
+  if (!replayClip || replayClip.length < 5 || gameOver) return;
+  const me = currSnap && serverMe(currSnap.data);
+  if (me && me.alive) return;
+  replay = { frames: replayClip, t0: replayClip[0].st, dur: replayClip[replayClip.length - 1].st - replayClip[0].st, t: 0 };
+}
 const infoBtn = document.getElementById('infoBtn');
 if (infoBtn) infoBtn.addEventListener('pointerdown', (e) => {
   e.preventDefault();
@@ -954,7 +975,7 @@ function connect(name) {
       lastArrival = at;
       currSnap = { data, at, st: data.time };
       snapBuf.push(currSnap);
-      while (snapBuf.length > 12) snapBuf.shift();
+      while (snapBuf.length > 220) snapBuf.shift(); // ~11 s: enough for the death replay
       if (data.round.over && !gameOver) gameOver = { ranking: [...data.players].sort((a, b) => b.score - a.score).map((p) => ({ ...p, badges: [] })), teamBadges: [], wave: data.wave, kills: data.kills, won: !!data.round.won, t: 0 };
       if (!data.round.over && gameOver) gameOver = null;
       reconcile(data);
@@ -1218,6 +1239,10 @@ window.addEventListener('keydown', (e) => {
   }
   if (e.code === 'Escape' && myId) {
     e.preventDefault();
+    if (replay) {
+      replay = null;
+      return;
+    }
     toggleMenu(!menuOpen);
   }
 }, true);
@@ -1383,7 +1408,7 @@ function addMark(x, y, kind, facing = 1) {
 function anim(id) {
   let a = anims.get(id);
   if (!a) {
-    a = { squash: 0, recoil: 0, bite: 0, hurt: 0, wasGround: true, lastSeen: 0 };
+    a = { squash: 0, recoil: 0, bite: 0, hurt: 0, throwT: 0, catchT: 0, wasGround: true, lastSeen: 0 };
     anims.set(id, a);
   }
   return a;
@@ -1494,6 +1519,13 @@ function handleEvents(events) {
           itemFlyers.push({ wx: ev.x, wy: ev.y, icon: info.icon, color: info.color, t: 0 });
           tutorialStep('pickup');
         }
+        if (ev.caught) {
+          anim(ev.id).catchT = 0.5;
+          burst(ev.x, ev.y - 20, 10, { colors: ['#fff6c2', '#ffd27f'], minSpeed: 20, maxSpeed: 90, life: 0.5, size: 3, gravity: -40, round: true });
+          floatingTexts.push({ x: ev.x, y: ev.y - 40, text: ev.caught === 'air' ? 'Chyceno!' : 'Sebráno', color: '#ffd27f', life: 1, size: 13 });
+          if (ev.caught === 'air' && ev.from && ev.from !== ev.id) addFeed(`🤝 ${playerName(ev.id)} chytil(a) ${info.label.toLowerCase()} od ${playerName(ev.from)}`, '#c9e6b8');
+          SFX.pop();
+        }
         burst(ev.x, ev.y, 14, { colors: [info.color, '#ffffff'], minSpeed: 30, maxSpeed: 160, life: 0.6, gravity: -60, round: true });
         flashes.push({ x: ev.x, y: ev.y, r: 120, t: 0.4, maxT: 0.4, color: '255,255,220' });
         floatingTexts.push({ x: ev.x, y: ev.y - 20, text: info.label, color: info.color, life: 1.1, size: 13 });
@@ -1504,6 +1536,10 @@ function handleEvents(events) {
         emoteBubbles.set(ev.id, { n: ev.n, t: 2.2 });
         break;
       case 'revived':
+        if (ev.id === myId) {
+          replayClip = null;
+          replay = null;
+        }
         burst(ev.x, ev.y, 22, { colors: ['#dff3ff', '#7fe0a8', '#ffffff'], minSpeed: 20, maxSpeed: 150, life: 1, gravity: -80, round: true });
         flashes.push({ x: ev.x, y: ev.y, r: 180, t: 0.6, maxT: 0.6, color: '200,240,255' });
         addFeed(`✨ ${ev.byName} oživil(a) hráče ${ev.name}`, '#a8e6a1');
@@ -1571,6 +1607,10 @@ function handleEvents(events) {
         SFX.bite();
         break;
       case 'death':
+        if (ev.id === myId && snapBuf.length >= 20) {
+          // Keep the last ten seconds for the "how did that get me" replay
+          replayClip = snapBuf.slice(-200).map((f) => ({ data: f.data, st: f.st }));
+        }
         burst(ev.x, ev.y, 24, { colors: ['#d61f1f', '#8f0e0e', '#ffffff'], maxSpeed: 300, life: 1, up: 120 });
         burst(ev.x, ev.y, 10, { colors: ['rgba(200,230,255,0.8)', 'rgba(255,255,255,0.6)'], minSpeed: 10, maxSpeed: 40, life: 1.2, size: 8, gravity: -80, round: true });
         if (ev.by) addFeed(`🔫 ${ev.byName} zastřelil(a) kamaráda ${ev.name} (−20)`, '#ffb3a7');
@@ -1668,8 +1708,13 @@ function handleEvents(events) {
         break;
       }
       case 'boss':
-        announce('Liščí matka', 'Přišla si pro vás. Nejdřív bojuje sama.', '#ffb347', '#d63d3d', 5);
-        addFeed('🐺 Liščí matka vylezla z nory!', '#ff8b8b');
+        if (ev.elder) {
+          announce('Matka s mláďaty', 'Dokud jsou mláďata u ní, nic jí neublíží. Odlákej je vnadidlem.', '#ffb347', '#d63d3d', 6);
+          addFeed('🐺 Matka se vrátila s mláďaty. Odlákejte je!', '#ff8b8b');
+        } else {
+          announce('Liščí matka', 'Přišla si pro vás. Nejdřív bojuje sama.', '#ffb347', '#d63d3d', 5);
+          addFeed('🐺 Liščí matka vylezla z nory!', '#ff8b8b');
+        }
         shake = Math.max(shake, 14);
         lightningFlash = 0.4;
         SFX.roar();
@@ -1691,14 +1736,32 @@ function handleEvents(events) {
         buzz(50);
         SFX.rubble();
         break;
+      case 'bossdown':
+        announce('Liščí matka padla!', `${ev.breather} s klidu. Les jde dál, ve vlně 20 se vrátí s mláďaty.`, '#ffd27f', '#e08b1f', 5);
+        addFeed(`🏆 ${ev.by ? playerName(ev.by) : 'Někdo'} složil(a) Liščí matku!`, '#ffd27f');
+        for (let i = 0; i < 4; i++) burst(camX + rand(0, CAM.w), camY + rand(0, CAM.h * 0.5), 10, { colors: ['#ffd27f', '#ffffff', '#ff8c42'], minSpeed: 30, maxSpeed: 160, life: 1.8, size: 5, gravity: 120, round: true });
+        SFX.fanfare();
+        break;
+      case 'shielded':
+        shieldTextT -= 0;
+        if (shieldTextT <= 0) {
+          shieldTextT = 0.8;
+          floatingTexts.push({ x: ev.x, y: ev.y - 30, text: `štít mláďat (${ev.cubs})`, color: '#8fd1ff', life: 0.9, size: 13 });
+        }
+        burst(ev.x, ev.y + 40, 6, { colors: ['#8fd1ff', '#dff3ff'], minSpeed: 30, maxSpeed: 120, life: 0.4, size: 3, gravity: 0, round: true });
+        break;
+      case 'cubborn':
+        addFeed('🦊 Matce se narodilo další mládě', '#ffb08a');
+        break;
       case 'victory':
         gameOver = { ranking: ev.ranking, teamBadges: ev.teamBadges || [], wave: ev.wave, kills: ev.kills, won: true, t: 0 };
         recordRoundInProfile(ev, true);
-        announce('Vítězství!', 'Liščí matka je poražena. Les je zase váš.', '#ffd27f', '#e08b1f', 5);
+        announce('Vítězství!', 'Matka i mláďata jsou pryč. Les je zase váš.', '#ffd27f', '#e08b1f', 5);
         for (let i = 0; i < 6; i++) burst(camX + rand(0, CAM.w), camY + rand(0, CAM.h * 0.5), 12, { colors: ['#ffd27f', '#ffffff', '#7fe0a8', '#ff8c42'], minSpeed: 30, maxSpeed: 180, life: 2, size: 5, gravity: 120, round: true });
         SFX.fanfare();
         break;
       case 'throw':
+        anim(ev.id).throwT = 0.35;
         SFX.toss();
         break;
       case 'land':
@@ -1728,6 +1791,8 @@ function handleEvents(events) {
         scoreShown = 0;
         marks.length = 0;
         readySent = false;
+        replayClip = null;
+        replay = null;
         if (ev.world) {
           world = ev.world;
           buildScenery(world.seed);
@@ -2472,7 +2537,7 @@ function drawLights(g, playersR) {
 // Characters
 // ===========================================================================
 function drawHunterSprite(g, o, opts) {
-  const { facing = 1, swing = 0, lean = 0, squash = 0, recoil = 0, flash = 0, flicker = false, time = 0, climbing = false, dashing = false } = opts;
+  const { facing = 1, swing = 0, lean = 0, squash = 0, recoil = 0, flash = 0, flicker = false, time = 0, climbing = false, dashing = false, throwK = 0, catchK = 0 } = opts;
   g.save();
   g.scale(facing, 1);
   g.rotate(lean * facing);
@@ -2499,7 +2564,21 @@ function drawHunterSprite(g, o, opts) {
   g.fillStyle = '#d9b44a';
   g.fillRect(-2, -22, 4, 3);
 
-  if (climbing) {
+  if (throwK > 0 || catchK > 0) {
+    // Free arm up: winding up a throw or reaching for a flying crate; rifle hangs on the back
+    const k = throwK > 0 ? throwK : catchK;
+    const ang = throwK > 0 ? -1.2 + (1 - k) * 1.6 : -1.0 - Math.sin(k * Math.PI) * 0.3;
+    g.fillStyle = '#5a3a1f';
+    g.fillRect(-13, -44, 4, 26);
+    g.save();
+    g.translate(4, -34);
+    g.rotate(ang);
+    g.fillStyle = o.jacket;
+    g.fillRect(0, -3, 16, 6);
+    g.fillStyle = o.skin;
+    g.fillRect(16, -3, 5, 6);
+    g.restore();
+  } else if (climbing) {
     g.fillStyle = '#5a3a1f';
     g.fillRect(-13, -44, 4, 26);
     g.fillStyle = o.jacket;
@@ -2621,7 +2700,7 @@ function drawHunter(g, p, x, y, time, isMe) {
   }
   g.save();
   g.translate(cx, y + 48 - bob);
-  drawHunterSprite(g, o, { facing: p.facing, swing, lean, squash: a.squash, recoil: a.recoil, flash: a.recoil > 0.55 ? (a.recoil - 0.55) / 0.45 : 0, flicker: p.inv && !p.dash, time, climbing: p.climbing, dashing: p.dash });
+  drawHunterSprite(g, o, { facing: p.facing, swing, lean, squash: a.squash, recoil: a.recoil, flash: a.recoil > 0.55 ? (a.recoil - 0.55) / 0.45 : 0, flicker: p.inv && !p.dash, time, climbing: p.climbing, dashing: p.dash, throwK: a.throwT / 0.35, catchK: a.catchT / 0.5 });
   g.restore();
 
   if (p.stinkT > 0) {
@@ -2712,7 +2791,7 @@ function drawGhost(g, p, x, y, time, isMe) {
 
 function drawFoxSprite(g, opts) {
   const { facing = 1, run = 0, air = false, bite = 0, hurt = false, alpha = 1, rot = 0, mega = false, scale = 1, time = 0, kind = 'normal' } = opts;
-  const PAL = { normal: ['#e0561f', '#e8641f'], fast: ['#d9a441', '#e8b85a'], jumper: ['#5a6d84', '#6d8199'], digger: ['#6b4a2a', '#7d5a36'], mega: ['#b8391a', '#c9461f'], mother: ['#7a2412', '#8f2e18'] }[kind] || ['#e0561f', '#e8641f'];
+  const PAL = { normal: ['#e0561f', '#e8641f'], fast: ['#d9a441', '#e8b85a'], jumper: ['#5a6d84', '#6d8199'], digger: ['#6b4a2a', '#7d5a36'], mega: ['#b8391a', '#c9461f'], mother: opts.elder ? ['#5e2a22', '#6f3328'] : ['#7a2412', '#8f2e18'], cub: ['#f0a05a', '#f6b46e'] }[kind] || ['#e0561f', '#e8641f'];
   g.save();
   g.globalAlpha = alpha;
   g.rotate(rot);
@@ -2885,7 +2964,17 @@ function drawFox(g, f, x, y, time) {
   g.save();
   g.translate(x + w / 2, y + h);
   g.scale(1 + a.squash * 0.15, 1 - a.squash * 0.2);
-  drawFoxSprite(g, { facing: f.facing, run, air: !f.onGround, bite: a.bite > 0 ? Math.sin((a.bite / 0.25) * Math.PI) : 0, hurt: a.hurt > 0, mega: f.mega || f.boss, scale, time, kind: f.kind, rot: sniff });
+  drawFoxSprite(g, { facing: f.facing, run, air: !f.onGround, bite: a.bite > 0 ? Math.sin((a.bite / 0.25) * Math.PI) : 0, hurt: a.hurt > 0, mega: f.mega || f.boss, scale, time, kind: f.kind, rot: sniff, elder: f.elder });
+  if (f.elder) {
+    // Grey muzzle and a scar: she has been here before
+    g.save();
+    g.translate(x + w / 2, y + h);
+    g.scale(f.facing * scale, scale);
+    g.fillStyle = 'rgba(230,230,225,0.7)';
+    g.fillRect(20, -19, 6, 3);
+    g.fillRect(12, -33, 4, 2);
+    g.restore();
+  }
   g.restore();
   if (f.trapped) {
     g.strokeStyle = '#c9c9c9';
@@ -3348,16 +3437,17 @@ function drawHUD(g, me, snap, dt) {
       g.font = `900 13px ${FONT_TITLE}`;
       g.textAlign = 'left';
       g.fillStyle = '#ff8b8b';
-      g.fillText('Liščí matka', bx0 + 14, 30);
+      g.fillText(snap.boss.elder ? 'Matka s mláďaty' : 'Liščí matka', bx0 + 14, 30);
       g.textAlign = 'right';
       g.font = `700 11px ${FONT_BODY}`;
-      g.fillStyle = '#f3ecd8';
-      g.fillText(snap.boss.phase === 2 ? 'fáze 2: volá smečku' : 'fáze 1: bojuje sama', bx0 + bw - 14, 30);
+      g.fillStyle = snap.boss.shielded ? '#8fd1ff' : '#f3ecd8';
+      const phaseText = snap.boss.phase === 2 ? 'fáze 2: volá smečku' : 'fáze 1: bojuje sama';
+      g.fillText(snap.boss.elder ? (snap.boss.shielded ? `🛡 štít ${snap.boss.cubs} mláďat · odlákej je vnadidlem` : `mláďata: ${snap.boss.cubs} · ${phaseText}`) : phaseText, bx0 + bw - 14, 30);
       g.fillStyle = 'rgba(0,0,0,0.55)';
       roundRect(g, bx0 + 14, 36, bw - 28, 10, 3);
       g.fill();
       const k = boss.hp / boss.maxHp;
-      g.fillStyle = k > 0.5 ? '#e04b4b' : '#ffb347';
+      g.fillStyle = snap.boss.shielded ? '#5a8fb3' : k > 0.5 ? '#e04b4b' : '#ffb347';
       roundRect(g, bx0 + 14, 36, Math.max(6, (bw - 28) * k), 10, 3);
       g.fill();
       g.strokeStyle = 'rgba(255,255,255,0.35)';
@@ -3639,23 +3729,64 @@ function drawBanner(g, dt) {
 }
 
 function drawGhostHint(g, me, dt) {
-  if (ghostHint <= 0 || gameOver) return;
-  ghostHint -= dt;
-  g.save();
-  g.globalAlpha = clamp(ghostHint, 0, 1);
-  const pw = 440;
-  const ph = 74;
+  if (gameOver) return;
+  if (ghostHint > 0) {
+    ghostHint -= dt;
+    g.save();
+    g.globalAlpha = clamp(ghostHint, 0, 1);
+    const pw = 440;
+    const ph = 90;
+    const px = VIEW.w / 2 - pw / 2;
+    const py = 104;
+    drawPanel(g, px, py, pw, ph);
+    g.textAlign = 'center';
+    g.font = `900 20px ${FONT_TITLE}`;
+    g.fillStyle = '#dff3ff';
+    g.fillText('Lišky tě dostaly. Teď jsi duch.', VIEW.w / 2, py + 30);
+    g.font = `700 12px ${FONT_BODY}`;
+    g.fillStyle = '#f3ecd8';
+    g.fillText(`Přežil(a) jsi ${me.survived} s. Přileť k živému lovci, ať tě oživí klávesou E (10 HP).`, VIEW.w / 2, py + 52);
+    if (replayClip) {
+      g.fillStyle = '#ffd27f';
+      g.fillText(document.body.classList.contains('touch') ? 'Klepni do hry: přehrát posledních 10 s' : 'R: přehrát posledních 10 s, jak tě to dostalo', VIEW.w / 2, py + 72);
+    }
+    g.restore();
+  } else if (replayClip) {
+    g.font = `700 10px ${FONT_BODY}`;
+    g.textAlign = 'center';
+    g.fillStyle = 'rgba(255,210,127,0.7)';
+    g.fillText(document.body.classList.contains('touch') ? '⏪ klepni do hry: jak mě to dostalo' : '⏪ R: jak mě to dostalo', VIEW.w / 2, 100);
+  }
+}
+
+function drawReplayBar(g) {
+  const k = clamp(replay.t / Math.max(1, replay.dur), 0, 1);
+  const pw = 420;
   const px = VIEW.w / 2 - pw / 2;
-  const py = 104;
-  drawPanel(g, px, py, pw, ph);
-  g.textAlign = 'center';
-  g.font = `900 20px ${FONT_TITLE}`;
-  g.fillStyle = '#dff3ff';
-  g.fillText('Lišky tě dostaly. Teď jsi duch.', VIEW.w / 2, py + 30);
-  g.font = `700 12px ${FONT_BODY}`;
-  g.fillStyle = '#f3ecd8';
-  g.fillText(`Přežil(a) jsi ${me.survived} s. Přileť k živému lovci, ať tě oživí klávesou E (10 HP).`, VIEW.w / 2, py + 52);
-  g.restore();
+  const py = 96;
+  drawPanel(g, px, py, pw, 44);
+  g.font = `900 13px ${FONT_TITLE}`;
+  g.textAlign = 'left';
+  g.fillStyle = '#ffd27f';
+  g.fillText('⏪ Jak mě to dostalo', px + 14, py + 20);
+  g.font = `700 10px ${FONT_BODY}`;
+  g.textAlign = 'right';
+  g.fillStyle = 'rgba(243,236,216,0.75)';
+  g.fillText(document.body.classList.contains('touch') ? 'klepnutí zavře' : 'R / Esc zavře', px + pw - 14, py + 20);
+  g.fillStyle = 'rgba(0,0,0,0.5)';
+  roundRect(g, px + 14, py + 28, pw - 28, 8, 3);
+  g.fill();
+  g.fillStyle = '#ffd27f';
+  roundRect(g, px + 14, py + 28, (pw - 28) * k, 8, 3);
+  g.fill();
+  // Letterbox stripes to make it read as a recording
+  g.fillStyle = 'rgba(0,0,0,0.55)';
+  g.fillRect(0, 0, VIEW.w, 14);
+  g.fillRect(0, VIEW.h - 14, VIEW.w, 14);
+  g.font = `900 10px ${FONT_TITLE}`;
+  g.textAlign = 'left';
+  g.fillStyle = Math.sin(performance.now() / 300) > 0 ? '#e04b4b' : 'rgba(224,75,75,0.3)';
+  g.fillText('● REC', 10, 11);
 }
 
 function drawGameOver(g, snap, dt, time) {
@@ -3827,17 +3958,21 @@ let leafTimer = 0;
 function interpolated(kind, renderNow) {
   const latest = snapBuf[snapBuf.length - 1];
   if (!latest) return [];
-  const renderSt = latest.st - interpDelay - (latest.at - renderNow);
+  return interpAt(snapBuf, kind, latest.st - interpDelay - (latest.at - renderNow));
+}
+
+function interpAt(buf, kind, renderSt) {
   let a = null;
   let b = null;
-  for (let i = snapBuf.length - 1; i >= 0; i--) {
-    if (snapBuf[i].st <= renderSt) {
-      a = snapBuf[i];
-      b = snapBuf[i + 1] || null;
+  for (let i = buf.length - 1; i >= 0; i--) {
+    if (buf[i].st <= renderSt) {
+      a = buf[i];
+      b = buf[i + 1] || null;
       break;
     }
   }
-  if (!a) a = snapBuf[0];
+  if (!a) a = buf[0];
+  if (!a) return [];
   const curr = (b || a).data[kind] || [];
   if (!b) return curr.map((e) => ({ ...e, rx: e.x, ry: e.y }));
   const alpha = clamp((renderSt - a.st) / Math.max(1, b.st - a.st), 0, 1);
@@ -3877,17 +4012,24 @@ function frame(realNow) {
     return;
   }
 
-  predictStep(realDt);
+  if (replay) {
+    replay.t += dt * 1000;
+    if (replay.t > replay.dur + 800) replay = null;
+  }
+  if (!replay) predictStep(realDt);
 
-  const snap = currSnap.data;
+  // In replay the scene comes from the recorded frames instead of the live buffer
+  const replaySt = replay ? replay.t0 + Math.min(replay.t, replay.dur) : 0;
+  const frameAt = replay ? replay.frames.find((f) => f.st >= replaySt) || replay.frames[replay.frames.length - 1] : null;
+  const snap = replay ? frameAt.data : currSnap.data;
   const weather = snap.weather ? snap.weather.kind : 'clear';
   const broken = new Set(snap.broken || []);
 
-  const playersR = interpolated('players', now);
-  const foxesR = interpolated('foxes', now);
-  const bulletsR = interpolated('bullets', now);
+  const playersR = replay ? interpAt(replay.frames, 'players', replaySt) : interpolated('players', now);
+  const foxesR = replay ? interpAt(replay.frames, 'foxes', replaySt) : interpolated('foxes', now);
+  const bulletsR = replay ? interpAt(replay.frames, 'bullets', replaySt) : interpolated('bullets', now);
   const me = playersR.find((p) => p.id === myId);
-  if (me && predActive) {
+  if (me && predActive && !replay) {
     Object.assign(me, { rx: pred.x + renderOff.x, ry: pred.y + renderOff.y, vx: pred.vx, vy: pred.vy, onGround: pred.onGround, climbing: pred.climbing, facing: pred.facing, dash: pred.dashT > 0 });
   }
 
@@ -3904,7 +4046,10 @@ function frame(realNow) {
     a.recoil = Math.max(0, a.recoil - dt * 8);
     a.bite = Math.max(0, a.bite - dt);
     a.hurt = Math.max(0, a.hurt - dt);
+    a.throwT = Math.max(0, (a.throwT || 0) - dt);
+    a.catchT = Math.max(0, (a.catchT || 0) - dt);
   }
+  shieldTextT = Math.max(0, shieldTextT - dt);
   for (const [id, a] of anims) if (now - a.lastSeen > 5000) anims.delete(id);
 
   const lookTarget = me ? me.facing * 55 : 0;
@@ -3958,7 +4103,7 @@ function frame(realNow) {
     leafTimer = (weather === 'storm' ? 0.06 : rand(0.15, 0.4)) / qMul();
   }
   updateRain(dt, weather);
-  updateBodySounds(me, dt);
+  if (!replay) updateBodySounds(me, dt);
   updateMusicIntensity(snap, me, foxesR);
   denyT = Math.max(0, denyT - dt);
 
@@ -4224,11 +4369,12 @@ function frame(realNow) {
   VIEW.w = vw / hudScale;
   VIEW.h = vh / hudScale;
   drawHUD(ctx, me, snap, dt);
-  if (me && me.alive && !gameOver && !overviewOpen) drawTutorial(ctx, dt);
+  if (me && me.alive && !gameOver && !overviewOpen && !replay) drawTutorial(ctx, dt);
   drawMinimap(ctx, snap);
   drawCaptions(ctx, dt);
   drawBanner(ctx, dt);
-  if (me && !me.alive) drawGhostHint(ctx, me, dt);
+  if (me && !me.alive && !replay) drawGhostHint(ctx, me, dt);
+  if (replay) drawReplayBar(ctx);
   drawGameOver(ctx, snap, dt, time);
   drawOverview(ctx, snap);
   VIEW.w = vw;
