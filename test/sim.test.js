@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { Game, PLAYER, DEN, FIRE, TRAP, HORN, SEED: SEED_CFG, TREE_BURN, BOSS, BOSS2 } = require('../game/sim.js');
+const { Game, PLAYER, DEN, FIRE, TRAP, HORN, SEED: SEED_CFG, TREE_BURN, BOSS, BOSS2, LAIR, REVEAL, FOX_NAMES } = require('../game/sim.js');
 const Shared = require('../public/shared.js');
 const { WORLD, encodeDelta, applyDelta } = Shared;
 
@@ -638,7 +638,7 @@ test('at wave 20 the Mother returns with cubs that shield her until they are lur
   place(a, boss.x + boss.w + 10);
   a.invulnTimer = 60;
   const dir = boss.x < 1600 ? 1 : -1;
-  game.lures.set(999, { id: 999, kind: 'bait', owner: a.id, x: boss.x + dir * 650, y: WORLD.groundY - 10, w: 24, h: 10, life: 30, radius: 500 });
+  game.lures.set(999, { id: 999, kind: 'bait', owner: a.id, x: boss.x + boss.w / 2 + dir * 450, y: WORLD.groundY - 10, w: 24, h: 10, life: 30, radius: 500 });
   run(game, 4);
   assert.equal(game.cubsNear(boss), 0, 'cubs went for the bait');
   game.damageFox(boss, 50, a);
@@ -776,4 +776,56 @@ test('when every hunter is ready the break between rounds ends early', () => {
   run(game, 1.2);
   assert.equal(game.round.over, false, 'all ready: new round started');
   assert.equal(a.ready, false, 'ready flags reset for the next round');
+});
+
+test('mega foxes and the Mother carry names; the killer gets a badge and her lair can be dug out', () => {
+  const game = mk();
+  const a = game.addPlayer({ name: 'A' });
+  place(a, 1500);
+  const mega = game.spawnFox('mega');
+  assert.ok(FOX_NAMES.includes(mega.name), 'mega fox has a name');
+  const plain = game.spawnFox('normal');
+  assert.equal(plain.name, undefined, 'ordinary foxes stay anonymous');
+  game.takeEvents();
+  game.damageFox(mega, 99999, a);
+  const kill = game.takeEvents().find((e) => e.kind === 'kill');
+  assert.equal(kill.name, mega.name);
+  assert.equal(kill.nameAcc, `${mega.name.slice(0, -1)}u`);
+  assert.ok(game.ranking()[0].badges.some((b) => b.startsWith('Složil(a) ')), 'named kill badge');
+  // The first boss leaves her lair behind
+  const boss = game.spawnFox('mother');
+  game.bossId = boss.id;
+  game.bossPhase = 1;
+  boss.x = 1400;
+  game.takeEvents();
+  game.damageFox(boss, 99999, a);
+  const down = game.takeEvents().find((e) => e.kind === 'bossdown');
+  assert.ok(down && down.lair && down.name === boss.name);
+  assert.ok(game.lair && !game.lair.opened);
+  place(a, game.lair.x + 20);
+  a.hp = 50;
+  game.setInput(a.id, input({ revive: true }));
+  const events = run(game, LAIR.openTime + 0.3);
+  assert.ok(events.some((e) => e.kind === 'lairopen'), 'lair opened');
+  assert.equal(game.lair.opened, true);
+  assert.equal(a.hp, 50 + LAIR.heal, 'digger healed');
+  assert.ok(game.pickups.size + events.filter((e) => e.kind === 'pickup').length >= 3, 'loot flew out (some straight into the digger\'s hands)');
+  assert.ok(game.ranking()[0].badges.includes('Vykradl(a) doupě'));
+});
+
+test('a ghost hovering above a hunter reveals underground foxes to them for a while', () => {
+  const game = mk();
+  const a = game.addPlayer({ name: 'A' });
+  const g = game.addPlayer({ name: 'G' });
+  place(a, 1500);
+  game.damagePlayer(g, 999, 0);
+  g.x = a.x;
+  g.y = a.y - 80;
+  const events = run(game, REVEAL.hover + 0.2);
+  const rev = events.find((e) => e.kind === 'reveal');
+  assert.ok(rev && rev.id === a.id && rev.by === g.id, 'reveal granted');
+  assert.ok(a.reveal > REVEAL.duration - 0.5);
+  assert.ok(game.snapshot().players.find((p) => p.id === a.id).reveal > 0);
+  run(game, 1);
+  assert.equal(events.filter((e) => e.kind === 'reveal').length, 1, 'cooldown prevents spamming');
 });

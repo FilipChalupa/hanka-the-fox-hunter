@@ -78,6 +78,11 @@ const ROUND_RESTART = 12;
 const WAVE_BREATHER = 5; // seconds of calm after a wave is cleared
 
 const rand = (a, b) => a + Math.random() * (b - a);
+// Names for the foxes worth remembering (all end in -a so the accusative is name[:-1] + 'u')
+const FOX_NAMES = ['Rezka', 'Zrzka', 'Ryška', 'Ohnivka', 'Bystra', 'Šelma', 'Lstivka', 'Kmotra', 'Drápka', 'Zubatka', 'Ferina', 'Vichra', 'Bouřka', 'Šedka', 'Divoška', 'Plamínka', 'Chytra', 'Tlapka'];
+const accusative = (name) => (name && name.endsWith('a') ? `${name.slice(0, -1)}u` : name);
+const LAIR = { w: 90, h: 50, openTime: 2, heal: 25, loot: ['double', 'lantern', 'horn', 'seed', 'medkit'] };
+const REVEAL = { hover: 1.0, duration: 5, reach: 46, above: 130, cooldown: 8 };
 
 function weightedPick(table, filter) {
   const entries = Object.entries(table).filter(([k, v]) => v.weight > 0 && (!filter || filter(k, v)));
@@ -115,6 +120,8 @@ class Game {
     this.howlTimer = 0;
     this.teamStats = { firstDeathWave: 0, bothDens: false, bossDown: false };
     this.cubTimer = 0;
+    this.lair = null;
+    this.usedNames = new Set();
     this.weather = { kind: 'clear', t: 0 };
     this.weatherTimer = rand(WEATHER.gap[0], WEATHER.gap[1]);
     this.lightningTimer = 0;
@@ -173,7 +180,7 @@ class Game {
     const p = {
       id, name, token, outfit: this.pickOutfit(outfit), connected: true, disconnectedAt: 0,
       x: spawn.x, y: spawn.y, vx: 0, vy: 0, w: PLAYER.w, h: PLAYER.h,
-      hp: this.round.over ? 0 : PLAYER.hp, alive: !this.round.over,
+      hp: this.round.over ? 0 : PLAYER.hp, alive: !this.round.over, named: [], reveal: 0, revealCd: 0, hoverT: 0,
       score: 0, kills: 0, deaths: 0, teamKills: 0, roundRevives: 0,
       totalKills: 0, totalRevives: 0, totalTeamKills: 0, rounds: 0,
       facing: 1, onGround: false, climbing: false, dashT: 0, dashDir: 1, dashCd: 0, jumpHeld: false, jumpTime: 0, speedBoost: false,
@@ -255,7 +262,7 @@ class Game {
 
   respawnPlayer(p) {
     Object.assign(p, {
-      alive: true, hp: PLAYER.hp, spawnedAt: this.time, lifeKills: 0, score: 0, kills: 0, teamKills: 0, roundRevives: 0,
+      alive: true, hp: PLAYER.hp, spawnedAt: this.time, lifeKills: 0, score: 0, kills: 0, teamKills: 0, roundRevives: 0, named: [], reveal: 0, revealCd: 0, hoverT: 0,
       weapon: 'rifle', ammo: 0, speedTimer: 0, stinkTimer: 0, incAmmo: 0, doubleTimer: 0, disguiseTimer: 0, item: null, speedBoost: false, reviveProgress: 0, climbing: false, dashT: 0,
       x: WORLD.width / 2 - PLAYER.w / 2 + rand(-80, 80), y: WORLD.groundY - PLAYER.h, vx: 0, vy: 0, invulnTimer: 1.5,
     });
@@ -312,6 +319,23 @@ class Game {
     }
     if (!p.alive) {
       moveGhost(p, p.input, dt);
+      // A ghost hovering right above a living hunter for a second reveals the foxes underground to them
+      let host = null;
+      for (const q of this.players.values()) {
+        if (!q.alive || q === p) continue;
+        const dx = Math.abs(q.x + q.w / 2 - (p.x + p.w / 2));
+        const dy = q.y - (p.y + p.h);
+        if (dx < REVEAL.reach && dy > -10 && dy < REVEAL.above) host = q;
+      }
+      if (host && host.revealCd <= 0) {
+        p.hoverT += dt;
+        if (p.hoverT >= REVEAL.hover) {
+          p.hoverT = 0;
+          host.reveal = REVEAL.duration;
+          host.revealCd = REVEAL.cooldown;
+          this.push({ kind: 'reveal', id: host.id, by: p.id, name: host.name, byName: p.name, x: host.x + host.w / 2, y: host.y });
+        }
+      } else p.hoverT = 0;
       return;
     }
 
@@ -327,6 +351,14 @@ class Game {
     const inp = p.input;
     const dir = (inp.right ? 1 : 0) - (inp.left ? 1 : 0);
 
+    p.reveal = Math.max(0, p.reveal - dt);
+    p.revealCd = Math.max(0, p.revealCd - dt);
+    // Digging through the Mother's lair: hold E inside it, standing still
+    if (this.lair && !this.lair.opened && inp.revive && dir === 0 && !inp.shoot && p.onGround && overlaps(p, this.lair)) {
+      this.lair.progress += dt;
+      this.lair.digger = p.id;
+      if (this.lair.progress >= LAIR.openTime) this.openLair(p);
+    }
     // Reviving: must stand still on the ground and must not shoot.
     if (inp.revive && dir === 0 && !inp.shoot && p.onGround && !p.climbing) {
       const ghost = this.findGhostNear(p);
@@ -372,6 +404,21 @@ class Game {
         this.applyPickup(p, pk);
       }
     }
+  }
+
+  openLair(p) {
+    const lair = this.lair;
+    lair.opened = true;
+    lair.opener = p.id;
+    p.hp = Math.min(PLAYER.hp, p.hp + LAIR.heal);
+    p.score += 40;
+    const gy = lair.y + lair.h;
+    for (let i = 0; i < 3; i++) {
+      const id = this.nextId++;
+      const kind = LAIR.loot[Math.floor(Math.random() * LAIR.loot.length)];
+      this.pickups.set(id, { id, kind, look: kind, x: clamp(lair.x + lair.w / 2 - PICKUP.w / 2 + (i - 1) * 60, 0, WORLD.width - PICKUP.w), y: gy - PICKUP.h - 40, w: PICKUP.w, h: PICKUP.h, life: 60, vx: (i - 1) * 90, vy: -260, air: true });
+    }
+    this.push({ kind: 'lairopen', id: p.id, x: lair.x + lair.w / 2, y: gy, name: lair.name });
   }
 
   applyPickup(p, pk) {
@@ -528,6 +575,8 @@ class Game {
     award('Nejlepší střelec', (p) => p.kills);
     award('Zachránce', (p) => p.roundRevives);
     award('Přežil nejdéle', (p) => (p.alive ? this.time - p.spawnedAt : p.lastSurvival));
+    for (const p of list) if (p.named && p.named.length) badges.set(p.id, [...(badges.get(p.id) || []), ...p.named.map((n) => `Složil(a) ${accusative(n)}`)]);
+    if (this.lair && this.lair.opened && this.lair.opener) badges.set(this.lair.opener, [...(badges.get(this.lair.opener) || []), 'Vykradl(a) doupě']);
     return sorted.map((p) => ({
       id: p.id, name: p.name, outfit: p.outfit, score: p.score, kills: p.kills, survived: Math.round(p.alive ? this.time - p.spawnedAt : p.lastSurvival),
       badges: badges.get(p.id) || [],
@@ -581,6 +630,8 @@ class Game {
     this.howlTimer = 0;
     this.teamStats = { firstDeathWave: 0, bothDens: false, bossDown: false };
     this.cubTimer = 0;
+    this.lair = null;
+    this.usedNames = new Set();
     this.weather = { kind: 'clear', t: 0 };
     this.weatherTimer = rand(WEATHER.gap[0], WEATHER.gap[1]);
     this.roundStartedAt = this.time;
@@ -631,8 +682,9 @@ class Game {
       dug: kind === 'digger', digTimer: kind === 'digger' ? 0 : rand(3, 6), stun: 0,
       bestDist: Infinity, stuckT: 0, roam: null, fleeing: false, fleeT: 0, fleeDir: 1,
     };
+    if (kind === 'mega' || kind === 'mother') fox.name = this.pickName();
     this.foxes.set(id, fox);
-    this.push({ kind: 'foxspawn', id, den: den.id, x: fox.x + fox.w / 2, y: fox.y + fox.h, foxKind: kind });
+    this.push({ kind: 'foxspawn', id, den: den.id, x: fox.x + fox.w / 2, y: fox.y + fox.h, foxKind: kind, name: fox.name });
     return fox;
   }
 
@@ -656,6 +708,14 @@ class Game {
     }
     if (lure) return { x: lure.x, y: lure.y, w: lure.w, h: lure.h, alive: true, isLure: lure };
     return this.nearestAlivePlayer(fox);
+  }
+
+  pickName() {
+    const free = FOX_NAMES.filter((n) => !this.usedNames.has(n));
+    const pool = free.length ? free : FOX_NAMES;
+    const name = pool[Math.floor(Math.random() * pool.length)];
+    this.usedNames.add(name);
+    return name;
   }
 
   nearestAlivePlayer(fox) {
@@ -1043,7 +1103,8 @@ class Game {
         shooter.lifeKills++;
         shooter.totalKills++;
       }
-      this.push({ kind: 'kill', id: fox.id, x: fox.x + fox.w / 2, y: fox.y + fox.h / 2, by: shooter ? shooter.id : 0, mega: fox.mega, foxKind: fox.kind, score, source });
+      this.push({ kind: 'kill', id: fox.id, x: fox.x + fox.w / 2, y: fox.y + fox.h / 2, by: shooter ? shooter.id : 0, mega: fox.mega, foxKind: fox.kind, score, source, name: fox.name, nameAcc: accusative(fox.name) });
+      if (fox.name && shooter) shooter.named.push(fox.name);
       if (Math.random() < (fox.mega ? PICKUP.megaDropChance : PICKUP.dropChance)) this.dropPickup(fox.x + fox.w / 2, fox.y + fox.h);
       if (fox.boss && fox.id === this.bossId) {
         this.bossId = 0;
@@ -1051,10 +1112,14 @@ class Game {
         this.foxes.clear();
         if (fox.elder) this.endRound(true);
         else {
-          // First boss down: a celebration, a longer breather, and the forest goes on towards wave 20
+          // First boss down: a celebration, a longer breather, and the forest goes on towards wave 20.
+          // Her lair stays behind where she fell, with something worth digging out.
           this.teamStats.bossDown = true;
           this.breather = BOSS.afterBreather;
-          this.push({ kind: 'bossdown', wave: this.wave, breather: BOSS.afterBreather, by: shooter ? shooter.id : 0 });
+          const lx = clamp(fox.x + fox.w / 2 - LAIR.w / 2, 120, WORLD.width - 120 - LAIR.w);
+          const gy = groundBelow(this.world.platforms, lx, LAIR.w, fox.y + fox.h);
+          this.lair = { x: lx, y: gy - LAIR.h, w: LAIR.w, h: LAIR.h, name: fox.name, opened: false, progress: 0, opener: 0, digger: 0 };
+          this.push({ kind: 'bossdown', wave: this.wave, breather: BOSS.afterBreather, by: shooter ? shooter.id : 0, name: fox.name, nameAcc: accusative(fox.name), lair: { x: this.lair.x, y: this.lair.y } });
         }
       }
     } else {
@@ -1382,6 +1447,10 @@ class Game {
       if (!g.alive && !g.reviver) g.reviveProgress = Math.max(0, g.reviveProgress - dt * 1.5);
       g.reviver = 0;
     }
+    if (this.lair && !this.lair.opened) {
+      if (!this.lair.digger) this.lair.progress = Math.max(0, this.lair.progress - dt);
+      this.lair.digger = 0;
+    }
     for (const f of this.foxes.values()) this.updateFox(f, dt);
     this.updateBullets(dt);
     this.updateFires(dt);
@@ -1455,6 +1524,7 @@ class Game {
       weather: { kind: this.weather.kind, t: Math.ceil(this.weather.t) },
       dens: this.dens.map((d) => ({ id: d.id, collapsed: d.collapsed, dmg: Math.round((d.damage / DEN.hp) * 100) / 100, t: Math.ceil(d.timer) })),
       broken: [...this.broken],
+      lair: this.lair ? { x: this.lair.x, y: this.lair.y, w: this.lair.w, h: this.lair.h, name: this.lair.name, opened: this.lair.opened, k: Math.round((this.lair.progress / LAIR.openTime) * 100) / 100 } : null,
       players: [...this.players.values()].map((p) => ({
         id: p.id, name: p.name, outfit: p.outfit, on: p.connected,
         x: Math.round(p.x * 10) / 10, y: Math.round(p.y * 10) / 10, vx: Math.round(p.vx), vy: Math.round(p.vy),
@@ -1465,7 +1535,7 @@ class Game {
         seq: p.seq,
         weapon: p.weapon, ammo: p.ammo, speedT: Math.ceil(p.speedTimer), stinkT: Math.ceil(p.stinkTimer),
       incAmmo: p.incAmmo, doubleT: Math.ceil(p.doubleTimer), disguiseT: Math.ceil(p.disguiseTimer), item: p.item, fragile: p.fragile,
-        revive: p.alive ? 0 : Math.round((p.reviveProgress / PLAYER.reviveTime) * 100) / 100, ready: p.ready,
+        revive: p.alive ? 0 : Math.round((p.reviveProgress / PLAYER.reviveTime) * 100) / 100, ready: p.ready, reveal: Math.ceil(p.reveal),
       roundRevives: p.roundRevives, teamKills: p.teamKills,
         reviving: p.reviving,
         survived: Math.round(p.alive ? this.time - p.spawnedAt : p.lastSurvival || 0),
@@ -1473,7 +1543,7 @@ class Game {
         totalKills: p.totalKills, totalRevives: p.totalRevives, totalTeamKills: p.totalTeamKills,
       })),
       foxes: [...this.foxes.values()].map((f) => ({
-        id: f.id, kind: f.kind, mega: f.mega, boss: f.boss || false, elder: f.elder || false, w: f.w, h: f.h, dug: f.dug || false, stun: f.stun > 0,
+        id: f.id, kind: f.kind, mega: f.mega, boss: f.boss || false, elder: f.elder || false, name: f.name, w: f.w, h: f.h, dug: f.dug || false, stun: f.stun > 0,
         x: Math.round(f.x * 10) / 10, y: Math.round(f.y * 10) / 10, vx: Math.round(f.vx),
         hp: f.hp, maxHp: f.maxHp, facing: f.facing, onGround: f.onGround, roam: !!f.roam, flee: !!f.fleeing, trapped: f.trapped > 0,
       })),
@@ -1489,4 +1559,4 @@ class Game {
   }
 }
 
-module.exports = { Game, PLAYER, FOX_KINDS, WEAPONS, PICKUPS, FIRE, DEN, WEATHER, BULLET, ROUND_RESTART, TRAP, LURES, HORN, SEED, TREE_BURN, BOSS, BOSS2, THROW };
+module.exports = { Game, PLAYER, FOX_KINDS, WEAPONS, PICKUPS, FIRE, DEN, WEATHER, BULLET, ROUND_RESTART, TRAP, LURES, HORN, SEED, TREE_BURN, BOSS, BOSS2, THROW, LAIR, REVEAL, FOX_NAMES, accusative };

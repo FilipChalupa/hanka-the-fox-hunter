@@ -181,6 +181,13 @@ wss.on('connection', (ws) => {
     }
     if (!msg || typeof msg !== 'object') return;
 
+    if (msg.t === 'join' && msg.watch && !player) {
+      // Spectator: no hunter, just the stream of snapshots
+      ws.spectator = true;
+      sendJson(ws, { t: 'welcome', proto: PROTOCOL, id: 0, spectator: true, world: game.world, name: 'divák' });
+      console.log(`👁 spectator joined`);
+      return;
+    }
     if (msg.t === 'join' && !player) {
       // Same token within the grace period => same hunter, same score.
       const token = typeof msg.token === 'string' && msg.token.length >= 16 && msg.token.length <= 64 ? msg.token : null;
@@ -199,7 +206,10 @@ wss.on('connection', (ws) => {
       console.log(`+ ${player.name} (#${player.id}) ${rejoined ? 'is back' : 'joined'}, ${game.connectedCount()} online`);
       return;
     }
-    if (!player) return;
+    if (!player) {
+      if (msg.t === 'ping') sendJson(ws, { t: 'pong', ts: msg.ts });
+      return;
+    }
 
     if (msg.t === 'input') game.setInput(player.id, msg);
     else if (msg.t === 'emote') game.emote(player.id, Number(msg.n));
@@ -233,7 +243,9 @@ setInterval(() => {
 let lastSent = null;
 let keyframeTimer = 0;
 setInterval(() => {
-  if (game.players.size === 0) {
+  let watchers = 0;
+  for (const ws of wss.clients) if (ws.spectator) watchers++;
+  if (game.players.size === 0 && watchers === 0) {
     game.takeEvents();
     lastSent = null;
     return;
