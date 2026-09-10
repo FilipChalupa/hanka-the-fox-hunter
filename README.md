@@ -47,9 +47,11 @@ a hrajete spolu.
 | Zvuk    | `M` vypne/zapne všechny zvuky včetně hudby (pamatuje se) |
 | Duch    | `W`/`↑` nahoru, `S`/`↓` dolů             |
 
-Na dotykových zařízeních je vlevo virtuální joystick (pohyb, skok tahem
-nahoru, duch létá všemi směry), vpravo tlačítka skok, střelba a oživení,
-nahoře řada emotů.
+Na dotykových zařízeních je vlevo virtuální joystick (doleva, doprava a dolů;
+skok a lezení nahoru má vlastní tlačítko, duch létá joystickem a tlačítkem
+skoku), vpravo tlačítka skok, střelba, oživení, úhyb a použít, na levém
+okraji sloupec emotů. Na výšku v prohlížeči je les u horního okraje a
+ovládání pod ním; nainstalovaná aplikace se otevře na šířku.
 
 ## Pravidla
 

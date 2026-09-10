@@ -76,18 +76,29 @@
     #fs:hover { opacity: 1; }
     body.touch #fs { top: max(8px, env(safe-area-inset-top)); bottom: auto; right: max(8px, env(safe-area-inset-right)); opacity: 0.8; }
 
-    /* Phone held upright: ask for landscape */
-    #rotate {
-      display: none;
-      position: fixed; inset: 0; z-index: 20;
-      background: rgba(7, 16, 9, 0.96);
-      color: var(--text);
-      align-items: center; justify-content: center; flex-direction: column;
-      text-align: center; padding: 24px; font-size: 1.1rem;
+    /* Phone held upright (browser, not the installed app): the forest sits at the top,
+       the controls get the empty space below so fingers never cover the game. */
+    @media (orientation: portrait) and (pointer: coarse) {
+      #wrap { align-items: flex-start; padding-top: env(safe-area-inset-top); }
+      canvas#game { width: 100vw; height: calc(100vw * 9 / 16); }
+      #joy { bottom: max(24px, env(safe-area-inset-bottom)); left: 12px; width: 140px; height: 140px; }
+      #tShoot { bottom: max(24px, env(safe-area-inset-bottom)); right: 12px; }
+      #tJump { right: 108px; bottom: max(36px, env(safe-area-inset-bottom)); }
+      #tRevive { right: 12px; bottom: calc(max(24px, env(safe-area-inset-bottom)) + 108px); }
+      #tDash { right: 108px; bottom: calc(max(24px, env(safe-area-inset-bottom)) + 118px); }
+      #tUse { right: 190px; bottom: max(36px, env(safe-area-inset-bottom)); }
+      body.touch #emotes { top: calc(100vw * 9 / 16 + env(safe-area-inset-top) + 10px); left: 12px; flex-direction: row; }
+      body.touch #menuBtn, body.touch #fs { top: calc(100vw * 9 / 16 + env(safe-area-inset-top) + 10px); }
+      body.touch #fs { right: 12px; }
+      body.touch #menuBtn { right: 56px; }
+      body.touch #rotateHint { display: block; }
     }
-    #rotate span { font-size: 3rem; display: block; margin-bottom: 12px; animation: tilt 1.6s ease-in-out infinite; }
-    @keyframes tilt { 0%, 100% { transform: rotate(0); } 50% { transform: rotate(-90deg); } }
-    @media (orientation: portrait) and (pointer: coarse) { #rotate { display: flex; } }
+    #rotateHint {
+      display: none;
+      position: fixed; left: 0; right: 0;
+      top: calc(100vw * 9 / 16 + env(safe-area-inset-top) + 52px);
+      text-align: center; font-size: 0.8rem; opacity: 0.6; pointer-events: none;
+    }
 
     #menuBtn {
       position: fixed; top: max(8px, env(safe-area-inset-top)); right: calc(max(8px, env(safe-area-inset-right)) + 44px);
@@ -338,11 +349,11 @@
     #tUse { right: calc(max(16px, env(safe-area-inset-right)) + 184px); bottom: max(28px, env(safe-area-inset-bottom)); width: 60px; height: 60px; font-size: 0.65rem; }
     #emotes {
       position: absolute;
-      top: calc(max(8px, env(safe-area-inset-top)) + 52px);
-      left: 50%;
-      transform: translateX(-50%);
-      display: flex; gap: 6px;
+      top: 18%;
+      left: max(8px, env(safe-area-inset-left));
+      display: flex; flex-direction: column; gap: 6px;
       pointer-events: auto;
+      opacity: 0.85;
     }
     #emotes button {
       touch-action: none;
@@ -358,7 +369,7 @@
 </head>
 <body>
   <div id="wrap"><canvas id="game" width="960" height="540"></canvas></div>
-  <div id="rotate"><span>📱</span>Otoč telefon na šířku, les je široký.</div>
+  <div id="rotateHint">Na šířku uvidíš víc lesa.</div>
   <button id="menuBtn" type="button" title="Nastavení (Esc)">⚙️</button>
   <div id="menu" hidden>
     <div class="menu-card">

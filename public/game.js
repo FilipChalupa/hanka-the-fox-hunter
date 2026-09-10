@@ -751,10 +751,10 @@ if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
     const len = Math.hypot(dx, dy);
     const k = len > max ? max / len : 1;
     knob.style.transform = `translate(${dx * k}px, ${dy * k}px)`;
+    // Left, right and down only: jumping (and holding up to climb) is the jump button's job
     const dead = 16;
     input.left = dx < -dead;
     input.right = dx > dead;
-    input.jump = dy < -dead * 1.4;
     input.down = dy > dead * 1.4;
   };
   joy.addEventListener('pointerdown', (e) => {
@@ -774,7 +774,7 @@ if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
     if (e.pointerId !== joyPointer) return;
     joyPointer = null;
     knob.style.transform = '';
-    input.left = input.right = input.jump = input.down = false;
+    input.left = input.right = input.down = false;
   };
   joy.addEventListener('pointerup', joyEnd);
   joy.addEventListener('pointercancel', joyEnd);
