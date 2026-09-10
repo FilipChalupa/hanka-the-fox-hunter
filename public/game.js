@@ -3668,7 +3668,7 @@ function drawGameOver(g, snap, dt, time) {
   const pw = 760;
   const rowH = 34;
   const teamLine = gameOver.teamBadges && gameOver.teamBadges.length ? 18 : 0;
-  const ph = 196 + teamLine + rows.length * rowH;
+  const ph = 206 + teamLine + rows.length * rowH;
   const px = VIEW.w / 2 - pw / 2;
   const py = VIEW.h / 2 - ph / 2;
   g.save();
@@ -3734,7 +3734,7 @@ function drawGameOver(g, snap, dt, time) {
   g.font = `900 16px ${FONT_TITLE}`;
   g.fillStyle = '#c9e6b8';
   g.save();
-  g.translate(VIEW.w / 2, py + ph - 18);
+  g.translate(VIEW.w / 2, py + ph - 34);
   const pulse = 1 + Math.sin(time * 4) * 0.03;
   g.scale(pulse, pulse);
   tabText(g, `${gameOver.won ? 'Další les' : 'Nové kolo'} za ${snap.round.restartIn} s`, 0, 0, 'center');
@@ -3742,7 +3742,7 @@ function drawGameOver(g, snap, dt, time) {
   const ready = snap.round.ready || 0;
   const online = snap.round.online || 1;
   g.save();
-  g.translate(VIEW.w / 2, py + ph - 48);
+  g.translate(VIEW.w / 2, py + ph - 66);
   const bw = 270;
   const bh = 28;
   const grd = g.createLinearGradient(0, -bh / 2, 0, bh / 2);
@@ -3762,7 +3762,7 @@ function drawGameOver(g, snap, dt, time) {
   g.font = `700 10px ${FONT_BODY}`;
   g.fillStyle = 'rgba(243,236,216,0.75)';
   g.textAlign = 'center';
-  g.fillText(`💡 ${currentTip(dt)}`, VIEW.w / 2, py + ph - 8);
+  g.fillText(`💡 ${currentTip(dt)}`, VIEW.w / 2, py + ph - 12);
   g.restore();
 }
 
