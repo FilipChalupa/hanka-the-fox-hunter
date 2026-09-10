@@ -34,6 +34,44 @@ const leaderboard = new Leaderboard(path.join(DATA_DIR, 'leaderboard.json'));
 const startedAt = Date.now();
 // Rolling metrics for /metrics
 const metrics = { tickMs: [], fullBytes: [], deltaBytes: [], snapshots: 0, roundsFinished: 0, roundsWon: 0 };
+// Telemetry that survives restarts: how far rounds get and how many hunters they had
+const TELEMETRY_FILE = path.join(DATA_DIR, 'telemetry.json');
+const telemetry = { waves: {}, players: {}, waveSum: 0, rounds: 0, bossDown: 0, wins: 0 };
+try {
+  Object.assign(telemetry, JSON.parse(fs.readFileSync(TELEMETRY_FILE, 'utf8')));
+} catch {}
+function recordTelemetry(summary) {
+  const w = String(summary.wave);
+  const n = String(Math.max(1, summary.ranking.length));
+  telemetry.waves[w] = (telemetry.waves[w] || 0) + 1;
+  telemetry.players[n] = (telemetry.players[n] || 0) + 1;
+  telemetry.waveSum += summary.wave;
+  telemetry.rounds++;
+  if (summary.won) telemetry.wins++;
+  if ((summary.teamBadges || []).includes('Liščí matka poražena')) telemetry.bossDown++;
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(TELEMETRY_FILE, JSON.stringify(telemetry));
+  } catch {}
+}
+const WAVE_BUCKETS = [1, 2, 3, 5, 7, 10, 15, 20];
+const PLAYER_BUCKETS = [1, 2, 3, 4, 6, 8];
+function histogram(name, help, counts, buckets) {
+  const lines = [`# HELP ${name} ${help}`, `# TYPE ${name} histogram`];
+  let total = 0;
+  let sum = 0;
+  const entries = Object.entries(counts).map(([k, v]) => [Number(k), v]);
+  for (const le of buckets) {
+    const c = entries.filter(([k]) => k <= le).reduce((a, [, v]) => a + v, 0);
+    lines.push(`${name}_bucket{le="${le}"} ${c}`);
+  }
+  for (const [k, v] of entries) {
+    total += v;
+    sum += k * v;
+  }
+  lines.push(`${name}_bucket{le="+Inf"} ${total}`, `${name}_sum ${sum}`, `${name}_count ${total}`);
+  return lines;
+}
 const pushMetric = (arr, v, cap = 600) => {
   arr.push(v);
   if (arr.length > cap) arr.shift();
@@ -45,6 +83,7 @@ const game = new Game({
     metrics.roundsFinished++;
     if (summary.won) metrics.roundsWon++;
     leaderboard.recordRound(summary);
+    recordTelemetry(summary);
   },
 });
 
@@ -75,6 +114,10 @@ const server = http.createServer((req, res) => {
       '# HELP foxhunter_rounds_total Rounds finished', '# TYPE foxhunter_rounds_total counter', `foxhunter_rounds_total{result="lost"} ${metrics.roundsFinished - metrics.roundsWon}`, `foxhunter_rounds_total{result="won"} ${metrics.roundsWon}`,
       '# HELP foxhunter_uptime_seconds Seconds since start', '# TYPE foxhunter_uptime_seconds counter', `foxhunter_uptime_seconds ${Math.round((Date.now() - startedAt) / 1000)}`,
       '# HELP foxhunter_protocol Protocol version', '# TYPE foxhunter_protocol gauge', `foxhunter_protocol ${PROTOCOL}`,
+      ...histogram('foxhunter_round_wave', 'Wave reached when a round ended (all rounds since first start)', telemetry.waves, WAVE_BUCKETS),
+      ...histogram('foxhunter_round_players', 'Hunters in a round when it ended', telemetry.players, PLAYER_BUCKETS),
+      '# HELP foxhunter_rounds_boss_down_total Rounds in which the first boss fell', '# TYPE foxhunter_rounds_boss_down_total counter', `foxhunter_rounds_boss_down_total ${telemetry.bossDown}`,
+      '# HELP foxhunter_rounds_won_total Rounds won (second boss beaten)', '# TYPE foxhunter_rounds_won_total counter', `foxhunter_rounds_won_total ${telemetry.wins}`,
     ];
     res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8', 'Cache-Control': 'no-store' });
     return res.end(lines.join('\n') + '\n');

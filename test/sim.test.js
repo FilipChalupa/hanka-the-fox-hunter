@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { Game, PLAYER, DEN, FIRE, TRAP, HORN, SEED: SEED_CFG, TREE_BURN, BOSS } = require('../game/sim.js');
+const { Game, PLAYER, DEN, FIRE, TRAP, HORN, SEED: SEED_CFG, TREE_BURN, BOSS, BOSS2 } = require('../game/sim.js');
 const Shared = require('../public/shared.js');
 const { WORLD, encodeDelta, applyDelta } = Shared;
 
@@ -602,17 +602,67 @@ test('the Fox Mother arrives at the boss wave, howls the pack in phase 2 and her
   assert.ok(events.some((e) => e.kind === 'bossphase' && e.phase === 2), 'phase 2');
   assert.ok(events.some((e) => e.kind === 'howl'), 'she howls');
   assert.ok(game.foxes.size > 1, 'the pack came out');
+  a.roundRevives = 3;
+  game.takeEvents();
+  game.damageFox(boss, 99999, a);
+  const after = game.takeEvents();
+  assert.ok(after.some((e) => e.kind === 'bossdown'), 'first boss down');
+  assert.equal(game.round.over, false, 'the round goes on towards the second boss');
+  assert.ok(game.breather > 5, 'a longer breather');
+  assert.equal(game.foxes.size, 0, 'the forest goes quiet for a moment');
+  assert.ok(a.score >= 300);
+  assert.ok(game.teamBadges(false).includes('Liščí matka poražena'));
+});
+
+test('at wave 20 the Mother returns with cubs that shield her until they are lured away', () => {
+  const game = mk();
+  const a = game.addPlayer({ name: 'A' });
+  place(a, 1500);
+  game.totalKills = (BOSS2.wave - 1) * 12;
+  game.announcedWave = BOSS2.wave - 1;
+  game.roundStartedAt = -100;
+  game.weatherTimer = 1e9;
+  const events = run(game, 6);
+  const bossEv = events.find((e) => e.kind === 'boss');
+  assert.ok(bossEv && bossEv.elder, 'elder boss announced');
+  const boss = game.foxes.get(bossEv.id);
+  const cubs = [...game.foxes.values()].filter((f) => f.cub);
+  assert.equal(cubs.length, BOSS2.cubs, 'four cubs');
+  run(game, 1);
+  const hp0 = boss.hp;
+  game.takeEvents();
+  game.damageFox(boss, 50, a);
+  assert.equal(boss.hp, hp0, 'shielded while cubs are close');
+  assert.ok(game.takeEvents().some((e) => e.kind === 'shielded'));
+  // Stand by the Mother so she stays put, drop bait far off to one side: the cubs leave her
+  place(a, boss.x + boss.w + 10);
+  a.invulnTimer = 60;
+  const dir = boss.x < 1600 ? 1 : -1;
+  game.lures.set(999, { id: 999, kind: 'bait', owner: a.id, x: boss.x + dir * 650, y: WORLD.groundY - 10, w: 24, h: 10, life: 30, radius: 500 });
+  run(game, 4);
+  assert.equal(game.cubsNear(boss), 0, 'cubs went for the bait');
+  game.damageFox(boss, 50, a);
+  assert.equal(boss.hp, hp0 - 50, 'now she can be hurt');
   let summary = null;
   game.onGameOver = (s) => (summary = s);
-  a.roundRevives = 3;
   game.damageFox(boss, 99999, a);
-  assert.equal(game.round.over, true);
-  assert.equal(game.round.won, true);
-  assert.ok(summary && summary.won);
-  assert.ok(summary.teamBadges.includes('Liščí matka poražena'));
-  assert.ok(summary.teamBadges.includes('Tři oživení v jednom kole'));
-  assert.equal(game.foxes.size, 0, 'the forest goes quiet');
-  assert.ok(a.score >= 300);
+  assert.equal(game.round.won, true, 'second boss down wins the round');
+  assert.ok(summary.teamBadges.includes('Matka s mláďaty poražena'));
+});
+
+test('a thrown crate that a teammate picks up reports the catch', () => {
+  const game = mk();
+  const a = game.addPlayer({ name: 'A' });
+  const b = game.addPlayer({ name: 'B' });
+  place(a, 1000);
+  place(b, 1200);
+  give(game, a, 'trap');
+  game.setInput(a.id, input({ throw: 1 }));
+  const events = run(game, 2);
+  const pick = events.find((e) => e.kind === 'pickup' && e.id === b.id);
+  assert.ok(pick, 'B got it');
+  assert.ok(pick.caught === 'air' || pick.caught === 'ground');
+  assert.equal(pick.from, a.id);
 });
 
 test('pickup kinds unlock with the wave', () => {

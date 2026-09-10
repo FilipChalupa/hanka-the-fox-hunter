@@ -24,9 +24,13 @@ const FOX_KINDS = {
   mega:   { w: 92, h: 56, hp: 150, hpPerWave: 15, damage: 30, bite: 1.2, jump: 820, speed: [95, 120], speedPerWave: 5, score: 50, minWave: 3, weight: 0 },
   // The Fox Mother: the round's boss. Phase 1 she fights alone, phase 2 she howls the pack out of the dens.
   mother: { w: 130, h: 80, hp: 600, hpPerWave: 0, damage: 35, bite: 1.3, jump: 900, speed: [105, 125], speedPerWave: 0, score: 300, minWave: 99, weight: 0 },
+  // Cubs guard the Mother when she returns at wave 20: while one is near her she cannot be hurt.
+  cub:    { w: 30, h: 18, hp: 15, hpPerWave: 0, damage: 5, bite: 0.6, jump: 620, speed: [200, 240], speedPerWave: 0, score: 10, minWave: 99, weight: 0 },
 };
 const MEGA_EVERY = 3;
-const BOSS = { wave: 10, hpPerPlayer: 150, howlEvery: 6, howlCount: 3, stompRadius: 170, stompDamage: 15 };
+const BOSS = { wave: 10, hpPerPlayer: 150, howlEvery: 6, howlCount: 3, stompRadius: 170, stompDamage: 15, afterBreather: 8 };
+// Second boss: the Mother with cubs. Cubs stick to her and shield her; bait and lanterns pull them away.
+const BOSS2 = { wave: 20, hp: 900, cubs: 4, cubRespawn: 10, shieldRadius: 150, cubLureRadius: 700, cubGuardRange: 140 };
 
 // Bullets leave the muzzle at rifle height and are drawn there; their hitbox reaches 22 px
 // below that, so a shot fired from the hip still catches the small fast fox on flat ground.
@@ -109,7 +113,8 @@ class Game {
     this.bossId = 0;
     this.bossPhase = 0;
     this.howlTimer = 0;
-    this.teamStats = { firstDeathWave: 0, bothDens: false };
+    this.teamStats = { firstDeathWave: 0, bothDens: false, bossDown: false };
+    this.cubTimer = 0;
     this.weather = { kind: 'clear', t: 0 };
     this.weatherTimer = rand(WEATHER.gap[0], WEATHER.gap[1]);
     this.lightningTimer = 0;
@@ -399,7 +404,7 @@ class Game {
       p.ammo = (p.weapon === k ? p.ammo : 0) + WEAPONS[k].ammo;
       p.weapon = k;
     }
-    this.push({ kind: 'pickup', id: p.id, item: k, x: pk.x + pk.w / 2, y: pk.y + pk.h / 2 });
+    this.push({ kind: 'pickup', id: p.id, item: k, x: pk.x + pk.w / 2, y: pk.y + pk.h / 2, caught: pk.thrownBy ? (pk.air ? 'air' : 'ground') : undefined, from: pk.thrownBy });
   }
 
   throwItem(p, dir) {
@@ -409,7 +414,7 @@ class Game {
     p.facing = dir;
     this.pickups.set(id, {
       id, kind, look: kind, x: p.x + p.w / 2 - PICKUP.w / 2 + dir * 18, y: p.y + 6, w: PICKUP.w, h: PICKUP.h, life: PICKUP.life,
-      vx: dir * THROW.vx, vy: THROW.vy, air: true, noPick: { id: p.id, t: THROW.noPick },
+      vx: dir * THROW.vx, vy: THROW.vy, air: true, noPick: { id: p.id, t: THROW.noPick }, thrownBy: p.id,
     });
     this.push({ kind: 'throw', id: p.id, item: kind, x: p.x + p.w / 2, y: p.y + 10, dir });
   }
@@ -533,7 +538,8 @@ class Game {
   teamBadges(won) {
     const out = [];
     const revives = [...this.players.values()].reduce((n, p) => n + p.roundRevives, 0);
-    if (won) out.push('Liščí matka poražena');
+    if (this.teamStats.bossDown) out.push('Liščí matka poražena');
+    if (won) out.push('Matka s mláďaty poražena');
     if (this.wave >= 5 && (!this.teamStats.firstDeathWave || this.teamStats.firstDeathWave >= 5)) out.push('Nikdo neumřel do vlny 5');
     if (this.teamStats.bothDens) out.push('Zavaleny obě nory najednou');
     if (revives >= 3) out.push('Tři oživení v jednom kole');
@@ -573,7 +579,8 @@ class Game {
     this.bossId = 0;
     this.bossPhase = 0;
     this.howlTimer = 0;
-    this.teamStats = { firstDeathWave: 0, bothDens: false };
+    this.teamStats = { firstDeathWave: 0, bothDens: false, bossDown: false };
+    this.cubTimer = 0;
     this.weather = { kind: 'clear', t: 0 };
     this.weatherTimer = rand(WEATHER.gap[0], WEATHER.gap[1]);
     this.roundStartedAt = this.time;
@@ -641,7 +648,8 @@ class Game {
     const fcx = fox.x + fox.w / 2;
     for (const l of fox.boss ? [] : this.lures.values()) {
       const d = Math.abs(l.x + l.w / 2 - fcx);
-      if (d < l.radius && d < lureD) {
+      const radius = fox.cub ? Math.max(l.radius, BOSS2.cubLureRadius) : l.radius;
+      if (d < radius && d < lureD) {
         lureD = d;
         lure = l;
       }
@@ -832,6 +840,24 @@ class Game {
       }
     }
 
+    if (fox.cub && !(target && target.isLure)) {
+      // Cubs keep to their mother's side and only snap at hunters who come close
+      const boss = this.foxes.get(this.bossId);
+      const near = target && !target.isLure && Math.abs(target.x + target.w / 2 - fcx) < BOSS2.cubGuardRange && Math.abs(target.y - fox.y) < 90;
+      if (boss && !near) {
+        const gx = boss.x + boss.w / 2 + fox.slot;
+        const dx = gx - fcx;
+        fox.vx = Math.abs(dx) > 10 ? Math.sign(dx) * fox.speed * 0.8 : Math.sin(this.time * 5 + fox.id) * 20;
+        fox.facing = fox.vx < 0 ? -1 : 1;
+        if (fox.onGround && fox.jumpTimer <= 0 && boss.y + boss.h < fox.y + fox.h - 40) {
+          fox.vy = -fox.jump;
+          fox.jumpTimer = rand(0.5, 1);
+        }
+        stepPhysics(fox, dt, this.world.platforms);
+        return;
+      }
+    }
+
     if (target && !fox.roam) {
       const tcx = target.x + target.w / 2;
       const dx = tcx - fcx;
@@ -922,19 +948,56 @@ class Game {
     }
   }
 
-  spawnBoss() {
+  spawnBoss(elder = false) {
     const boss = this.spawnFox('mother');
     if (!boss) return null;
     this.bossId = boss.id;
     this.bossPhase = 1;
     this.howlTimer = BOSS.howlEvery;
-    this.push({ kind: 'boss', id: boss.id, phase: 1, x: boss.x + boss.w / 2, y: boss.y, hp: boss.maxHp });
+    if (elder) {
+      boss.elder = true;
+      boss.hp = boss.maxHp = BOSS2.hp + BOSS.hpPerPlayer * Math.max(0, this.connectedCount() - 1);
+      for (let i = 0; i < BOSS2.cubs; i++) this.spawnCub(boss);
+      this.cubTimer = BOSS2.cubRespawn;
+    }
+    this.push({ kind: 'boss', id: boss.id, phase: 1, elder, x: boss.x + boss.w / 2, y: boss.y, hp: boss.maxHp });
     return boss;
+  }
+
+  spawnCub(boss) {
+    const K = FOX_KINDS.cub;
+    const id = this.nextId++;
+    const cub = {
+      id, kind: 'cub', mega: false, boss: false, cub: true,
+      x: clamp(boss.x + boss.w / 2 - K.w / 2 + rand(-60, 60), 0, WORLD.width - K.w), y: boss.y + boss.h - K.h, vx: 0, vy: 0, w: K.w, h: K.h,
+      hp: K.hp, maxHp: K.hp, speed: rand(K.speed[0], K.speed[1]), damage: K.damage, jump: K.jump, biteCooldown: K.bite, score: K.score,
+      facing: 1, onGround: false, biteTimer: 0.5, jumpTimer: rand(0.3, 1), wanderDir: 1, wanderTimer: 0, fireTick: 0,
+      dug: false, digTimer: 1e9, stun: 0, bestDist: Infinity, stuckT: 0, roam: null, fleeing: false, fleeT: 0, fleeDir: 1, slot: rand(-70, 70),
+    };
+    this.foxes.set(id, cub);
+    this.push({ kind: 'foxspawn', id, den: -1, x: cub.x + cub.w / 2, y: cub.y + cub.h, foxKind: 'cub' });
+    return cub;
+  }
+
+  cubsNear(boss) {
+    let n = 0;
+    for (const f of this.foxes.values()) if (f.cub && Math.abs(f.x + f.w / 2 - (boss.x + boss.w / 2)) < BOSS2.shieldRadius && Math.abs(f.y - boss.y) < 120) n++;
+    return n;
   }
 
   updateBoss(dt) {
     const boss = this.foxes.get(this.bossId);
     if (!boss) return;
+    if (boss.elder) {
+      // Lost cubs grow back while she lives
+      this.cubTimer -= dt;
+      const cubs = [...this.foxes.values()].filter((f) => f.cub).length;
+      if (this.cubTimer <= 0 && cubs < BOSS2.cubs) {
+        this.cubTimer = BOSS2.cubRespawn;
+        this.spawnCub(boss);
+        this.push({ kind: 'cubborn', id: boss.id, x: boss.x + boss.w / 2, y: boss.y });
+      }
+    }
     if (this.bossPhase === 1 && boss.hp <= boss.maxHp / 2) {
       this.bossPhase = 2;
       this.howlTimer = 1;
@@ -963,6 +1026,11 @@ class Game {
   }
 
   damageFox(fox, amount, shooter, source) {
+    if (fox.elder && this.cubsNear(fox) > 0) {
+      // The cubs' shield holds: lure them away with bait or a lantern first
+      this.push({ kind: 'shielded', id: fox.id, x: fox.x + fox.w / 2, y: fox.y, cubs: this.cubsNear(fox) });
+      return;
+    }
     fox.hp -= amount;
     if (fox.hp <= 0) {
       this.foxes.delete(fox.id);
@@ -981,7 +1049,13 @@ class Game {
         this.bossId = 0;
         this.bossPhase = 0;
         this.foxes.clear();
-        this.endRound(true);
+        if (fox.elder) this.endRound(true);
+        else {
+          // First boss down: a celebration, a longer breather, and the forest goes on towards wave 20
+          this.teamStats.bossDown = true;
+          this.breather = BOSS.afterBreather;
+          this.push({ kind: 'bossdown', wave: this.wave, breather: BOSS.afterBreather, by: shooter ? shooter.id : 0 });
+        }
       }
     } else {
       this.push({ kind: 'hit', id: fox.id, x: fox.x + fox.w / 2, y: fox.y + fox.h / 2 });
@@ -1341,7 +1415,8 @@ class Game {
         this.announcedWave = wave;
         const unlocked = Object.keys(PICKUPS).filter((k) => PICKUPS[k].minWave === wave && k !== 'curse');
         this.push({ kind: 'wave', wave, maxFoxes: this.maxFoxes, unlocked });
-        if (wave === BOSS.wave) this.spawnBoss();
+        if (wave === BOSS.wave) this.spawnBoss(false);
+        else if (wave === BOSS2.wave) this.spawnBoss(true);
         else if (wave % MEGA_EVERY === 0) {
           const count = Math.ceil(wave / (MEGA_EVERY * 2));
           for (let i = 0; i < count; i++) this.spawnFox('mega');
@@ -1375,7 +1450,7 @@ class Game {
         ready: this.round.over ? [...this.players.values()].filter((p) => p.connected && p.ready).length : 0,
         online: this.connectedCount(),
       },
-      boss: this.bossId ? { id: this.bossId, phase: this.bossPhase } : null,
+      boss: this.bossId ? { id: this.bossId, phase: this.bossPhase, elder: !!(this.foxes.get(this.bossId) || {}).elder, cubs: [...this.foxes.values()].filter((f) => f.cub).length, shielded: (() => { const b = this.foxes.get(this.bossId); return !!(b && b.elder && this.cubsNear(b) > 0); })() } : null,
       breather: Math.max(0, Math.ceil(this.breather)),
       weather: { kind: this.weather.kind, t: Math.ceil(this.weather.t) },
       dens: this.dens.map((d) => ({ id: d.id, collapsed: d.collapsed, dmg: Math.round((d.damage / DEN.hp) * 100) / 100, t: Math.ceil(d.timer) })),
@@ -1398,7 +1473,7 @@ class Game {
         totalKills: p.totalKills, totalRevives: p.totalRevives, totalTeamKills: p.totalTeamKills,
       })),
       foxes: [...this.foxes.values()].map((f) => ({
-        id: f.id, kind: f.kind, mega: f.mega, boss: f.boss || false, w: f.w, h: f.h, dug: f.dug || false, stun: f.stun > 0,
+        id: f.id, kind: f.kind, mega: f.mega, boss: f.boss || false, elder: f.elder || false, w: f.w, h: f.h, dug: f.dug || false, stun: f.stun > 0,
         x: Math.round(f.x * 10) / 10, y: Math.round(f.y * 10) / 10, vx: Math.round(f.vx),
         hp: f.hp, maxHp: f.maxHp, facing: f.facing, onGround: f.onGround, roam: !!f.roam, flee: !!f.fleeing, trapped: f.trapped > 0,
       })),
@@ -1414,4 +1489,4 @@ class Game {
   }
 }
 
-module.exports = { Game, PLAYER, FOX_KINDS, WEAPONS, PICKUPS, FIRE, DEN, WEATHER, BULLET, ROUND_RESTART, TRAP, LURES, HORN, SEED, TREE_BURN, BOSS, THROW };
+module.exports = { Game, PLAYER, FOX_KINDS, WEAPONS, PICKUPS, FIRE, DEN, WEATHER, BULLET, ROUND_RESTART, TRAP, LURES, HORN, SEED, TREE_BURN, BOSS, BOSS2, THROW };
