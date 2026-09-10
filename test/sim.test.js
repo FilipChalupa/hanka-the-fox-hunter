@@ -710,3 +710,20 @@ test('special guns are limited by shots, not time, and hand the rifle back when 
   assert.equal(ev2.filter((e) => e.kind === 'shoot' && e.fire).length, 10, 'ten incendiary shots');
   assert.equal(a.incAmmo, 0);
 });
+
+test('when every hunter is ready the break between rounds ends early', () => {
+  const game = mk();
+  const a = game.addPlayer({ name: 'A' });
+  const b = game.addPlayer({ name: 'B' });
+  game.damagePlayer(a, 999, 0);
+  game.damagePlayer(b, 999, 0);
+  assert.equal(game.round.over, true);
+  game.setReady(a.id);
+  run(game, 1);
+  assert.equal(game.round.over, true, 'one ready is not enough');
+  assert.equal(game.snapshot().round.ready, 1);
+  game.setReady(b.id);
+  run(game, 1.2);
+  assert.equal(game.round.over, false, 'all ready: new round started');
+  assert.equal(a.ready, false, 'ready flags reset for the next round');
+});

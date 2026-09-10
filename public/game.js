@@ -31,7 +31,7 @@ const DEFAULT_KEYS = {
   left: ['KeyA', 'ArrowLeft'], right: ['KeyD', 'ArrowRight'], jump: ['KeyW', 'ArrowUp', 'Space'], down: ['KeyS', 'ArrowDown'],
   shoot: ['ShiftLeft', 'ShiftRight', 'KeyF', 'KeyX', 'KeyJ', 'KeyK'], revive: ['KeyE'], use: ['KeyQ'],
 };
-const settings = { sfx: 1, musicVol: 0.8, shake: true, flashes: true, hud: 1, quality: 'auto', keys: JSON.parse(JSON.stringify(DEFAULT_KEYS)) };
+const settings = { sfx: 1, musicVol: 0.8, shake: true, flashes: true, captions: true, hud: 1, quality: 'auto', keys: JSON.parse(JSON.stringify(DEFAULT_KEYS)) };
 try {
   const saved = JSON.parse(localStorage.getItem('hanka-settings') || '{}');
   Object.assign(settings, saved);
@@ -89,6 +89,71 @@ const anims = new Map();
 const emoteBubbles = new Map();
 const hornRings = [];
 const itemFlyers = []; // picked-up crate icons flying into the HUD
+const captions = []; // sound captions {text, t}
+let overviewOpen = false; // Tab: crates and players
+let readySent = false;
+let tipIndex = 0;
+let tipTimer = 0;
+
+// Profile: statistics across sessions, kept in this browser
+const profile = { rounds: 0, wins: 0, revives: 0, kills: 0, bestWave: 0, bestScore: 0 };
+try {
+  Object.assign(profile, JSON.parse(localStorage.getItem('hanka-profile') || '{}'));
+} catch {}
+function saveProfile() {
+  try {
+    localStorage.setItem('hanka-profile', JSON.stringify(profile));
+  } catch {}
+  renderProfile();
+}
+function renderProfile() {
+  const el = document.getElementById('profile');
+  if (!el) return;
+  if (!profile.rounds && !profile.kills) {
+    el.hidden = true;
+    return;
+  }
+  el.hidden = false;
+  el.textContent = `Tvoje statistiky: ${profile.rounds} kol · ${profile.wins} výher · ${profile.kills} lišek · ${profile.revives} oživení · nejvyšší vlna ${profile.bestWave} · nejvíc bodů ${profile.bestScore}`;
+}
+renderProfile();
+
+// Tutorial: in-game checklist for newcomers, remembered per browser
+const TUTORIAL = [
+  { id: 'move', text: 'Rozhýbej se (A / D, joystick)' },
+  { id: 'jump', text: 'Vyskoč (W, tlačítko skok)' },
+  { id: 'shoot', text: 'Zastřel lišku (Shift / F)' },
+  { id: 'pickup', text: 'Seber bedýnku' },
+  { id: 'climb', text: 'Vylez na světlý kmen (drž W ve výskoku)' },
+  { id: 'revive', text: 'Až někdo umře: drž E u ducha', optional: true },
+];
+const tutorial = { done: new Set(), moved: 0, flash: 0, finished: false };
+try {
+  const saved = JSON.parse(localStorage.getItem('hanka-tutorial') || '[]');
+  for (const id of saved) tutorial.done.add(id);
+  if (saved.includes('*')) tutorial.finished = true;
+} catch {}
+function tutorialStep(id) {
+  if (tutorial.finished || tutorial.done.has(id)) return;
+  tutorial.done.add(id);
+  tutorial.flash = 1.2;
+  SFX.pickup();
+  const required = TUTORIAL.filter((t) => !t.optional);
+  if (required.every((t) => tutorial.done.has(t.id))) {
+    tutorial.finished = true;
+    addFeed('🎓 Základy umíš. Tab ukáže bedýnky a hráče.', '#c9e6b8');
+  }
+  try {
+    localStorage.setItem('hanka-tutorial', JSON.stringify([...tutorial.done, ...(tutorial.finished ? ['*'] : [])]));
+  } catch {}
+}
+
+function caption(text) {
+  if (!settings.captions || !text) return;
+  if (captions.length && captions[captions.length - 1].text === text && captions[captions.length - 1].t > 1) return;
+  captions.push({ text, t: 2.4 });
+  if (captions.length > 3) captions.shift();
+}
 const marks = []; // lasting ground marks: footprints in the wet, scorched grass
 let markTimer = 0;
 let denyT = 0; // HUD shake after a refused action
@@ -122,20 +187,42 @@ let camInit = false;
 
 const EMOTES = ['', '👍 Dobrá!', '🆘 Pomoc!', '😂', '❤️ Díky'];
 const PICKUP_INFO = {
-  medkit: { label: 'Lékárnička', icon: '✚', color: '#e8383d' },
-  shotgun: { label: 'Brokovnice', icon: '⋔', color: '#ffb347' },
-  rapid: { label: 'Rychlopalba', icon: '⚡', color: '#ffe066' },
-  speed: { label: 'Rychlé nohy', icon: '»', color: '#7fe0a8' },
-  stink: { label: 'Smrad', icon: '☁', color: '#9fd66b' },
-  incendiary: { label: 'Zápalné náboje', icon: '✹', color: '#ff8c42' },
-  double: { label: 'Dvojité body', icon: '×2', color: '#ffd27f' },
-  disguise: { label: 'Liščí převlek', icon: 'ᗢ', color: '#e0561f' },
-  trap: { label: 'Past', icon: '⌗', color: '#c9c9c9', held: true, hint: 'polož past' },
-  horn: { label: 'Lovecký roh', icon: '♪', color: '#d9b44a', held: true, hint: 'zatrub' },
-  seed: { label: 'Semínko', icon: '❀', color: '#7fe0a8', held: true, hint: 'zasaď strom' },
-  lantern: { label: 'Světluška', icon: '✺', color: '#d6ff78', held: true, hint: 'postav lucernu' },
-  bait: { label: 'Vnadidlo', icon: '♨', color: '#e07a5f', held: true, hint: 'polož maso' },
-  curse: { label: 'Prokletí!', icon: '☠', color: '#c9b3ff' },
+  medkit: { label: 'Lékárnička', icon: '✚', color: '#e8383d', wave: 1, desc: '+40 HP, zruší křehkost po oživení.' },
+  shotgun: { label: 'Brokovnice', icon: '⋔', color: '#ffb347', wave: 1, desc: '12 ran po třech brocích, zblízka nejsilnější.' },
+  rapid: { label: 'Rychlopalba', icon: '⚡', color: '#ffe066', wave: 2, desc: '40 ran, tři výstřely za čtvrt sekundy.' },
+  speed: { label: 'Rychlé nohy', icon: '»', color: '#7fe0a8', wave: 2, desc: '12 s o polovinu rychlejší běh.' },
+  stink: { label: 'Smrad', icon: '☁', color: '#9fd66b', wave: 3, desc: '10 s: lišky poblíž se otočí a utíkají.' },
+  trap: { label: 'Past', icon: '⌗', color: '#c9c9c9', wave: 3, held: true, hint: 'polož past', desc: 'Q položí; první liška se chytí na 3 s.' },
+  bait: { label: 'Vnadidlo', icon: '♨', color: '#e07a5f', wave: 3, held: true, hint: 'polož maso', desc: 'Q položí; lišky se 8 s perou u masa.' },
+  incendiary: { label: 'Zápalné náboje', icon: '✹', color: '#ff8c42', wave: 4, desc: '10 nábojů, kde dopadnou, vzplane oheň.' },
+  horn: { label: 'Lovecký roh', icon: '♪', color: '#d9b44a', wave: 4, held: true, hint: 'zatrub', desc: 'Q: všechny lišky 4 s jdou po tobě.' },
+  double: { label: 'Dvojité body', icon: '×2', color: '#ffd27f', wave: 5, desc: '15 s každá liška za dvojnásobek.' },
+  lantern: { label: 'Světluška', icon: '✺', color: '#d6ff78', wave: 5, held: true, hint: 'postav lucernu', desc: 'Q postaví; láká lišky, v mlze svítí.' },
+  disguise: { label: 'Liščí převlek', icon: 'ᗢ', color: '#e0561f', wave: 6, desc: '8 s tě lišky ignorují, nemůžeš střílet.' },
+  seed: { label: 'Semínko', icon: '❀', color: '#7fe0a8', wave: 6, held: true, hint: 'zasaď strom', desc: 'Q zasadí; za 5 s vyroste lezecký kmen.' },
+  curse: { label: 'Prokletí!', icon: '☠', color: '#c9b3ff', wave: 4, desc: 'Vypadá jako jiná bedýnka. Zpod tebe vyskočí hrabavá liška.' },
+};
+const TIPS = [
+  'Lišky nedosáhnou na světlé kmeny. Drž W ve výskoku u kmene a vylez nahoru.',
+  'Kulky zraní i kamarády. Nestřílej přes spoluhráče.',
+  'Když se potkají střely dvou lovců, vzplane oheň. Lišky se mu vyhýbají.',
+  'Zavalená nora nic nevypustí 12 s. Nastřílej do ní 80 poškození.',
+  'Duch přiletí k živému lovci; ten drží E, nehýbe se a nestřílí. Za 3 s je zpátky.',
+  'Pařez je kryt před hrabavou liškou. Ta vyleze vedle a je omráčená.',
+  'Dvojité klepnutí do strany je úhyb s krátkou nezranitelností.',
+  'Šipka dolů na plošině tě propustí skrz ni.',
+  'Podržení Q hodí držený předmět kamarádovi.',
+  'V mlze světluška v lahvi zdvojnásobí, kolik vidíš.',
+  'Mega liška ignoruje smrad, návnady i pasti. Střílej a uskakuj.',
+  'Bouřka hasí ohně rychleji a blesky občas trefí lišku.',
+  'Ve vlně 10 přijde Liščí matka. Její porážka kolo vyhraje.',
+  'Bedýnky se odemykají s vlnou. Na Tab uvidíš, co už je k mání.',
+  'Nízké HP je slyšet: tep srdce a dech. Hledej lékárničku.',
+];
+const CAPTIONS = {
+  howl: 'vytí Liščí matky', dig: 'liška se zahrabává', emerge: 'liška vyskočila zpod země', horn: 'lovecký roh', boss: 'řev Liščí matky',
+  bossphase: 'řev Liščí matky', lightning: 'hrom', stomp: 'dupnutí', dencollapse: 'nora se zavalila', denopen: 'lišky prohrabaly noru', mega: 'mega liška',
+  clash: 'střet střel', treefire: 'strom vzplál', treeburnt: 'strom shořel', wavedone: 'vlna hotová', curse: 'prokletí', trap: 'past sklapla',
 };
 const WEATHER_INFO = {
   clear: { label: '', icon: '' },
@@ -583,6 +670,16 @@ function requestDash(dir) {
 
 window.addEventListener('keydown', (e) => {
   if (document.activeElement === nameInput || menuOpen || capturing) return;
+  if (e.code === 'Tab') {
+    e.preventDefault();
+    overviewOpen = true;
+    return;
+  }
+  if (e.code === 'Enter' && gameOver) {
+    e.preventDefault();
+    sendReady();
+    return;
+  }
   if (EMOTE_KEYS[e.code] && !e.repeat) send({ t: 'emote', n: EMOTE_KEYS[e.code] });
   if (e.code === 'KeyM' && !e.repeat) {
     setSound(!soundOn);
@@ -608,6 +705,7 @@ window.addEventListener('keydown', (e) => {
   }
 });
 window.addEventListener('keyup', (e) => {
+  if (e.code === 'Tab') overviewOpen = false;
   const action = KEYMAP[e.code];
   if (!action) return;
   e.preventDefault();
@@ -639,8 +737,17 @@ function throwDirection() {
 }
 window.addEventListener('blur', () => {
   for (const k in input) input[k] = false;
+  overviewOpen = false;
 });
 canvas.addEventListener('mousedown', () => ensureAudio());
+canvas.addEventListener('pointerdown', () => {
+  if (gameOver) sendReady();
+});
+const infoBtn = document.getElementById('infoBtn');
+if (infoBtn) infoBtn.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  overviewOpen = !overviewOpen;
+});
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
 // Accidental Ctrl+W / tab close while playing: ask first (the browser shows its own dialog).
@@ -905,7 +1012,8 @@ function reconcile(data) {
   if (wasActive) {
     const ex = before.x - pred.x;
     const ey = before.y - pred.y;
-    if (Math.abs(ex) < 120 && Math.abs(ey) < 120) {
+    // Small errors melt away; bigger ones (a lost burst of packets) slide over instead of teleporting
+    if (Math.abs(ex) < 420 && Math.abs(ey) < 300) {
       renderOff.x += ex;
       renderOff.y += ey;
     } else renderOff = { x: 0, y: 0 };
@@ -929,11 +1037,26 @@ function predictStep(dt) {
   }
   inputSeq++;
   inputHistory.push({ seq: inputSeq, inp: { ...inp }, dt });
-  if (inputHistory.length > 240) inputHistory.shift();
+  if (inputHistory.length > 900) inputHistory.shift();
+  // No snapshot for a while (packet loss, hiccup): stop moving locally so the hunter does not
+  // run far ahead of a server that has not confirmed anything.
+  if (lastArrival && performance.now() - lastArrival > 800) {
+    sendInput(true);
+    return;
+  }
   if (pred.alive) {
+    const px0 = pred.x;
     const happened = S.movePlayer(pred, inp, dt, world);
+    if (!tutorial.finished) {
+      tutorial.moved += Math.abs(pred.x - px0);
+      if (tutorial.moved > 150) tutorialStep('move');
+      if (pred.climbing) tutorialStep('climb');
+    }
     for (const h of happened) {
-      if (h === 'jump') SFX.jump();
+      if (h === 'jump') {
+        SFX.jump();
+        tutorialStep('jump');
+      }
       if (h === 'dash') {
         SFX.dash();
         shake = Math.max(shake, 2);
@@ -947,8 +1070,9 @@ function predictStep(dt) {
   pendingDash = 0;
   pendingUse = false;
   pendingThrow = 0;
-  // Error smoothing: the render offset melts away over ~100 ms
-  const k = Math.min(1, dt * 12);
+  // Error smoothing: small offsets melt away over ~100 ms, large ones a bit slower so they read as a slide
+  const big = Math.hypot(renderOff.x, renderOff.y) > 60;
+  const k = Math.min(1, dt * (big ? 7 : 12));
   renderOff.x -= renderOff.x * k;
   renderOff.y -= renderOff.y * k;
 }
@@ -1032,6 +1156,7 @@ function toggleMenu(open) {
     document.getElementById('setMusic').value = settings.musicVol;
     document.getElementById('setShake').checked = settings.shake;
     document.getElementById('setFlashes').checked = settings.flashes;
+    document.getElementById('setCaptions').checked = settings.captions;
     document.getElementById('setHud').value = String(settings.hud);
     document.getElementById('setQuality').value = settings.quality;
     renderKeys();
@@ -1054,6 +1179,10 @@ if (menuEl) {
   });
   document.getElementById('setFlashes').addEventListener('change', (e) => {
     settings.flashes = e.target.checked;
+    saveSettings();
+  });
+  document.getElementById('setCaptions').addEventListener('change', (e) => {
+    settings.captions = e.target.checked;
     saveSettings();
   });
   document.getElementById('setHud').addEventListener('change', (e) => {
@@ -1092,6 +1221,13 @@ window.addEventListener('keydown', (e) => {
     toggleMenu(!menuOpen);
   }
 }, true);
+
+// Offline start screen and a faster launch of the installed app
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  });
+}
 
 // Invite: copy the game link (without the ?name auto-join) to the clipboard
 const inviteBtn = document.getElementById('invite');
@@ -1224,6 +1360,21 @@ function spawnLeafBurst(x, y, n) {
   }
 }
 
+function recordRoundInProfile(ev, won) {
+  profile.rounds++;
+  if (won) profile.wins++;
+  profile.bestWave = Math.max(profile.bestWave, ev.wave || 0);
+  const mine = (ev.ranking || []).find((r) => r.id === myId);
+  if (mine) profile.bestScore = Math.max(profile.bestScore, mine.score || 0);
+  saveProfile();
+}
+
+function sendReady() {
+  if (!gameOver || readySent || !myId) return;
+  readySent = true;
+  send({ t: 'ready' });
+}
+
 function addMark(x, y, kind, facing = 1) {
   marks.push({ x, y, kind, facing, r: rand(0.8, 1.2) });
   if (marks.length > 500) marks.shift();
@@ -1241,7 +1392,14 @@ function anim(id) {
 function handleEvents(events) {
   if (!events) return;
   for (const ev of events) {
+    if (CAPTIONS[ev.kind] && ((ev.kind !== 'dig' && ev.kind !== 'emerge') || Math.abs((ev.x || 0) - pred.x) < 700)) caption(CAPTIONS[ev.kind]);
     switch (ev.kind) {
+      case 'ready':
+        addFeed(`✅ ${ev.name} je připraven(a)`, '#c9e6b8');
+        break;
+      case 'allready':
+        addFeed('🚀 Všichni připraveni, jedeme!', '#c9e6b8');
+        break;
       case 'shoot': {
         const big = ev.weapon === 'shotgun';
         burst(ev.x + ev.dir * 6, ev.y + 2, big ? 10 : 5, { colors: ['#ffe27a', '#ffb347', '#fff'], minSpeed: 30, maxSpeed: big ? 220 : 140, life: 0.2, size: 3, gravity: 0 });
@@ -1332,7 +1490,10 @@ function handleEvents(events) {
       case 'pickup': {
         if (ev.item === 'curse') break;
         const info = PICKUP_INFO[ev.item] || { label: ev.item, color: '#fff' };
-        if (ev.id === myId) itemFlyers.push({ wx: ev.x, wy: ev.y, icon: info.icon, color: info.color, t: 0 });
+        if (ev.id === myId) {
+          itemFlyers.push({ wx: ev.x, wy: ev.y, icon: info.icon, color: info.color, t: 0 });
+          tutorialStep('pickup');
+        }
         burst(ev.x, ev.y, 14, { colors: [info.color, '#ffffff'], minSpeed: 30, maxSpeed: 160, life: 0.6, gravity: -60, round: true });
         flashes.push({ x: ev.x, y: ev.y, r: 120, t: 0.4, maxT: 0.4, color: '255,255,220' });
         floatingTexts.push({ x: ev.x, y: ev.y - 20, text: info.label, color: info.color, life: 1.1, size: 13 });
@@ -1350,7 +1511,12 @@ function handleEvents(events) {
           ghostHint = 0;
           SFX.respawn();
         }
-        if (ev.by === myId) scoreFlyers.push({ wx: ev.x, wy: ev.y - 20, t: 0, text: '+15', delta: 15 });
+        if (ev.by === myId) {
+          scoreFlyers.push({ wx: ev.x, wy: ev.y - 20, t: 0, text: '+15', delta: 15 });
+          profile.revives++;
+          tutorialStep('revive');
+          saveProfile();
+        }
         break;
       case 'dig':
         burst(ev.x, ev.y, 14, { colors: ['#6b4726', '#8a5a30', '#3b2a1a'], minSpeed: 40, maxSpeed: 160, life: 0.6, up: 120, size: 5 });
@@ -1369,6 +1535,11 @@ function handleEvents(events) {
         SFX.hit();
         break;
       case 'kill': {
+        if (ev.by === myId) {
+          profile.kills++;
+          tutorialStep('shoot');
+          if (profile.kills % 10 === 0) saveProfile();
+        }
         const big = ev.mega ? 2.5 : 1;
         burst(ev.x, ev.y, 14 * big, { colors: ['#e0561f', '#ff8c42', '#ffffff'], maxSpeed: 260 * big, life: 0.8, up: 80 });
         burst(ev.x, ev.y, 8 * big, { colors: ['rgba(255,255,255,0.7)', '#ddd'], minSpeed: 10, maxSpeed: 50 * big, life: 0.9, size: 9 * big, gravity: -40, round: true });
@@ -1522,6 +1693,7 @@ function handleEvents(events) {
         break;
       case 'victory':
         gameOver = { ranking: ev.ranking, teamBadges: ev.teamBadges || [], wave: ev.wave, kills: ev.kills, won: true, t: 0 };
+        recordRoundInProfile(ev, true);
         announce('Vítězství!', 'Liščí matka je poražena. Les je zase váš.', '#ffd27f', '#e08b1f', 5);
         for (let i = 0; i < 6; i++) burst(camX + rand(0, CAM.w), camY + rand(0, CAM.h * 0.5), 12, { colors: ['#ffd27f', '#ffffff', '#7fe0a8', '#ff8c42'], minSpeed: 30, maxSpeed: 180, life: 2, size: 5, gravity: 120, round: true });
         SFX.fanfare();
@@ -1546,6 +1718,7 @@ function handleEvents(events) {
         break;
       case 'gameover':
         gameOver = { ranking: ev.ranking, teamBadges: ev.teamBadges || [], wave: ev.wave, kills: ev.kills, won: false, t: 0 };
+        recordRoundInProfile(ev, false);
         addFeed('☠️ Lišky ovládly les. Nové kolo za chvíli.', '#ff8b8b');
         playTone({ type: 'sawtooth', from: 300, to: 50, dur: 1.4, gain: 0.1 });
         break;
@@ -1554,6 +1727,7 @@ function handleEvents(events) {
         ghostHint = 0;
         scoreShown = 0;
         marks.length = 0;
+        readySent = false;
         if (ev.world) {
           world = ev.world;
           buildScenery(world.seed);
@@ -3194,13 +3368,21 @@ function drawHUD(g, me, snap, dt) {
       g.stroke();
     }
   }
-  // Breather countdown
+  // Breather countdown with a tip underneath
   if (snap.breather > 0 && !snap.boss) {
     drawPanel(g, VIEW.w / 2 - 70, 12, 140, 32);
     g.font = `800 12px ${FONT_BODY}`;
     g.fillStyle = '#c9e6b8';
     g.textAlign = 'center';
     tabText(g, `☕ klid ${snap.breather} s`, VIEW.w / 2, 33, 'center');
+    const tip = currentTip(dt);
+    g.font = `700 11px ${FONT_BODY}`;
+    const tw = g.measureText(tip).width + 20;
+    g.fillStyle = 'rgba(20,12,5,0.6)';
+    roundRect(g, VIEW.w / 2 - tw / 2, 50, tw, 20, 5);
+    g.fill();
+    g.fillStyle = '#f3ecd8';
+    g.fillText(`💡 ${tip}`, VIEW.w / 2, 64);
   }
 
   g.textAlign = 'right';
@@ -3260,6 +3442,167 @@ function drawGuideArrows(g, me, playersR, time) {
   g.fill();
   g.restore();
   g.restore();
+}
+
+function drawTutorial(g, dt) {
+  if (tutorial.finished) return;
+  tutorial.flash = Math.max(0, tutorial.flash - dt);
+  const steps = TUTORIAL;
+  const px = 12;
+  const py = 142;
+  const pw = 320;
+  const ph = 26 + steps.length * 16;
+  drawPanel(g, px, py, pw, ph);
+  g.font = `900 12px ${FONT_TITLE}`;
+  g.fillStyle = '#ffd27f';
+  g.textAlign = 'left';
+  g.fillText('Začínáme', px + 12, py + 18);
+  g.font = `700 11px ${FONT_BODY}`;
+  let firstOpen = true;
+  steps.forEach((st, i) => {
+    const done = tutorial.done.has(st.id);
+    const yy = py + 34 + i * 16;
+    const current = !done && firstOpen && !st.optional;
+    if (current) firstOpen = false;
+    g.fillStyle = done ? '#7fe0a8' : current ? '#ffd27f' : st.optional ? 'rgba(243,236,216,0.55)' : 'rgba(243,236,216,0.8)';
+    g.fillText(`${done ? '☑' : '☐'} ${st.text}${st.optional && !done ? ' (volitelné)' : ''}`, px + 12, yy);
+  });
+  if (tutorial.flash > 0) {
+    g.strokeStyle = `rgba(127,224,168,${tutorial.flash / 1.2})`;
+    g.lineWidth = 2;
+    roundRect(g, px + 1, py + 1, pw - 2, ph - 2, 8);
+    g.stroke();
+  }
+}
+
+function drawCaptions(g, dt) {
+  for (let i = captions.length - 1; i >= 0; i--) {
+    captions[i].t -= dt;
+    if (captions[i].t <= 0) captions.splice(i, 1);
+  }
+  if (!captions.length) return;
+  g.font = `700 12px ${FONT_BODY}`;
+  g.textAlign = 'center';
+  captions.forEach((c, i) => {
+    const a = clamp(c.t, 0, 1);
+    const yy = VIEW.h - 64 - (captions.length - 1 - i) * 20;
+    const text = `${soundOn ? '🔊' : '🔇'} ${c.text}`;
+    const w = g.measureText(text).width + 18;
+    g.globalAlpha = a;
+    g.fillStyle = 'rgba(20,12,5,0.7)';
+    roundRect(g, VIEW.w / 2 - w / 2, yy - 14, w, 19, 5);
+    g.fill();
+    g.fillStyle = '#f3ecd8';
+    g.fillText(text, VIEW.w / 2, yy);
+  });
+  g.globalAlpha = 1;
+}
+
+function currentTip(dt) {
+  tipTimer += dt;
+  if (tipTimer > 7) {
+    tipTimer = 0;
+    tipIndex = (tipIndex + 1) % TIPS.length;
+  }
+  return TIPS[tipIndex];
+}
+
+function drawOverview(g, snap) {
+  if (!overviewOpen) return;
+  g.fillStyle = 'rgba(4,10,6,0.82)';
+  g.fillRect(0, 0, VIEW.w, VIEW.h);
+  const lx = 20;
+  const ly = 16;
+  drawPanel(g, lx, ly, 470, VIEW.h - 32);
+  g.font = `900 16px ${FONT_TITLE}`;
+  g.fillStyle = '#ffd27f';
+  g.textAlign = 'left';
+  g.fillText('Bedýnky', lx + 16, ly + 26);
+  g.font = `700 10px ${FONT_BODY}`;
+  g.fillStyle = 'rgba(243,236,216,0.7)';
+  g.fillText(`Vlna ${snap.wave}. Šedé se objeví později. Q použije, podržení Q hodí.`, lx + 16, ly + 42);
+  const kinds = Object.entries(PICKUP_INFO).sort((a, b) => a[1].wave - b[1].wave);
+  kinds.forEach(([k, info], i) => {
+    const col = i % 2;
+    const row = Math.floor(i / 2);
+    const x = lx + 16 + col * 225;
+    const y = ly + 66 + row * 60;
+    const locked = info.wave > snap.wave;
+    g.globalAlpha = locked ? 0.4 : 1;
+    g.fillStyle = 'rgba(0,0,0,0.25)';
+    roundRect(g, x - 4, y - 16, 218, 54, 6);
+    g.fill();
+    g.fillStyle = '#8a5a30';
+    roundRect(g, x, y - 12, 26, 26, 5);
+    g.fill();
+    g.font = `900 15px ${FONT_BODY}`;
+    g.fillStyle = info.color;
+    g.textAlign = 'center';
+    g.fillText(info.icon, x + 13, y + 6);
+    g.textAlign = 'left';
+    g.font = `800 12px ${FONT_BODY}`;
+    g.fillStyle = '#f3ecd8';
+    g.fillText(info.label, x + 34, y - 1);
+    g.font = `700 9px ${FONT_BODY}`;
+    g.fillStyle = locked ? '#ffb3a7' : '#c9e6b8';
+    g.fillText(`od vlny ${info.wave}${info.held ? ' · do ruky' : ''}`, x + 34, y + 12);
+    g.fillStyle = 'rgba(243,236,216,0.85)';
+    g.font = `600 9px ${FONT_BODY}`;
+    let line = '';
+    let ly2 = y + 24;
+    for (const w of info.desc.split(' ')) {
+      if (g.measureText(`${line} ${w}`).width > 178 && line) {
+        g.fillText(line, x + 34, ly2);
+        line = w;
+        ly2 += 11;
+      } else line = line ? `${line} ${w}` : w;
+    }
+    if (line) g.fillText(line, x + 34, ly2);
+    g.globalAlpha = 1;
+  });
+  const rx = 506;
+  drawPanel(g, rx, ly, VIEW.w - rx - 20, VIEW.h - 32);
+  g.font = `900 16px ${FONT_TITLE}`;
+  g.fillStyle = '#ffd27f';
+  g.textAlign = 'left';
+  g.fillText('Lovci', rx + 16, ly + 26);
+  const cols = [['Lovec', 0], ['Stav', 100], ['HP', 160], ['Body', 200], ['Lišky', 240], ['Oživ.', 278], ['TK', 310], ['Zbraň', 336], ['V ruce', 386]];
+  g.font = `900 10px ${FONT_TITLE}`;
+  g.fillStyle = '#ffd27f';
+  for (const [label, off] of cols) g.fillText(label, rx + 16 + off, ly + 50);
+  const players = [...snap.players].sort((a, b) => b.score - a.score);
+  players.forEach((p, i) => {
+    const y = ly + 70 + i * 22;
+    g.fillStyle = outfitOf(p).jacket;
+    roundRect(g, rx + 16, y - 9, 8, 8, 2);
+    g.fill();
+    g.font = `700 11px ${FONT_BODY}`;
+    g.fillStyle = p.id === myId ? '#ffd27f' : '#f3ecd8';
+    g.fillText(p.name.length > 11 ? `${p.name.slice(0, 10)}…` : p.name, rx + 28, y);
+    g.fillStyle = !p.alive ? '#dff3ff' : p.on === false ? '#999' : p.fragile ? '#ffd27f' : '#c9e6b8';
+    g.fillText(!p.alive ? '👻 duch' : p.on === false ? '📵 pryč' : p.fragile ? 'křehký' : 'v boji', rx + 16 + 100, y);
+    g.fillStyle = '#f3ecd8';
+    tabText(g, `${p.hp}`, rx + 16 + 160, y);
+    tabText(g, `${p.score}`, rx + 16 + 200, y);
+    tabText(g, `${p.kills}`, rx + 16 + 240, y);
+    tabText(g, `${p.roundRevives || 0}`, rx + 16 + 278, y);
+    tabText(g, `${p.teamKills || 0}`, rx + 16 + 310, y);
+    const w = p.weapon && p.weapon !== 'rifle' ? `${PICKUP_INFO[p.weapon].icon}${p.ammo}` : 'puška';
+    g.fillStyle = p.weapon && p.weapon !== 'rifle' ? PICKUP_INFO[p.weapon].color : '#f3ecd8';
+    tabText(g, w + (p.incAmmo > 0 ? ` ✹${p.incAmmo}` : ''), rx + 16 + 336, y);
+    const effects = [];
+    if (p.item && PICKUP_INFO[p.item]) effects.push(PICKUP_INFO[p.item].icon);
+    if (p.stinkT > 0) effects.push('☁');
+    if (p.disguiseT > 0) effects.push('ᗢ');
+    if (p.doubleT > 0) effects.push('×2');
+    if (p.speedT > 0) effects.push('»');
+    g.fillStyle = '#ffd27f';
+    g.fillText(effects.join(' ') || '–', rx + 16 + 386, y);
+  });
+  g.font = `700 10px ${FONT_BODY}`;
+  g.fillStyle = 'rgba(243,236,216,0.6)';
+  g.textAlign = 'center';
+  g.fillText('Tab zavře přehled', rx + (VIEW.w - rx - 20) / 2, VIEW.h - 26);
 }
 
 function drawBanner(g, dt) {
@@ -3325,7 +3668,7 @@ function drawGameOver(g, snap, dt, time) {
   const pw = 760;
   const rowH = 34;
   const teamLine = gameOver.teamBadges && gameOver.teamBadges.length ? 18 : 0;
-  const ph = 162 + teamLine + rows.length * rowH;
+  const ph = 196 + teamLine + rows.length * rowH;
   const px = VIEW.w / 2 - pw / 2;
   const py = VIEW.h / 2 - ph / 2;
   g.save();
@@ -3396,6 +3739,30 @@ function drawGameOver(g, snap, dt, time) {
   g.scale(pulse, pulse);
   tabText(g, `${gameOver.won ? 'Další les' : 'Nové kolo'} za ${snap.round.restartIn} s`, 0, 0, 'center');
   g.restore();
+  const ready = snap.round.ready || 0;
+  const online = snap.round.online || 1;
+  g.save();
+  g.translate(VIEW.w / 2, py + ph - 48);
+  const bw = 270;
+  const bh = 28;
+  const grd = g.createLinearGradient(0, -bh / 2, 0, bh / 2);
+  grd.addColorStop(0, readySent ? '#9fd66b' : '#ffc35c');
+  grd.addColorStop(1, readySent ? '#5aa04a' : '#e08b1f');
+  g.fillStyle = grd;
+  roundRect(g, -bw / 2, -bh / 2, bw, bh, 7);
+  g.fill();
+  g.strokeStyle = '#2b1708';
+  g.lineWidth = 2;
+  g.stroke();
+  g.fillStyle = '#2b1708';
+  g.font = `900 12px ${FONT_TITLE}`;
+  g.textAlign = 'center';
+  tabText(g, readySent ? `Připraven ${ready}/${online} · čekám na ostatní` : `Připraven ${ready}/${online} · Enter / klepnutí`, 0, 4, 'center');
+  g.restore();
+  g.font = `700 10px ${FONT_BODY}`;
+  g.fillStyle = 'rgba(243,236,216,0.75)';
+  g.textAlign = 'center';
+  g.fillText(`💡 ${currentTip(dt)}`, VIEW.w / 2, py + ph - 8);
   g.restore();
 }
 
@@ -3611,6 +3978,7 @@ function frame(realNow) {
     if (rumbleT <= 0) {
       rumbleT = 0.5;
       SFX.rumble();
+      caption('hrabání pod zemí');
       if (nearestDig < 120) buzz(30);
     }
   }
@@ -3856,10 +4224,13 @@ function frame(realNow) {
   VIEW.w = vw / hudScale;
   VIEW.h = vh / hudScale;
   drawHUD(ctx, me, snap, dt);
+  if (me && me.alive && !gameOver && !overviewOpen) drawTutorial(ctx, dt);
   drawMinimap(ctx, snap);
+  drawCaptions(ctx, dt);
   drawBanner(ctx, dt);
   if (me && !me.alive) drawGhostHint(ctx, me, dt);
   drawGameOver(ctx, snap, dt, time);
+  drawOverview(ctx, snap);
   VIEW.w = vw;
   VIEW.h = vh;
   ctx.restore();

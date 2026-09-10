@@ -42,7 +42,9 @@ a hrajete spolu.
 | Lezení  | drž `W` ve výskoku u světlého kmene, `S` u paty kmene; `W`/`S` leze, skok do strany seskočí |
 | Propad  | `S`/`↓` na plošině propadne skrz ni dolů |
 | Použít  | `Q` (past, roh, semínko, světluška, vnadidlo); podržet `Q` = hodit předmět kamarádovi |
-| Menu    | `Esc`: hlasitost efektů a hudby, otřesy, blesky, velikost HUD, kvalita grafiky, klávesy |
+| Menu    | `Esc`: hlasitost efektů a hudby, otřesy, blesky, titulky zvuků, velikost HUD, kvalita grafiky, klávesy |
+| Přehled | drž `Tab` (na mobilu tlačítko ❔): všechny bedýnky s popisem a vlnou odemčení, tabulka hráčů s HP, body, oživeními, zbraní a předměty |
+| Připraven | `Enter` nebo klepnutí ve výsledcích; když jsou připraveni všichni, nové kolo začne za sekundu |
 | Emoty   | `1` 👍, `2` 🆘, `3` 😂, `4` ❤️            |
 | Zvuk    | `M` vypne/zapne všechny zvuky včetně hudby (pamatuje se) |
 | Duch    | `W`/`↑` nahoru, `S`/`↓` dolů             |
@@ -121,6 +123,14 @@ ovládání pod ním; nainstalovaná aplikace se otevře na šířku.
   vlny 5, Zavaleny obě nory najednou, Tři oživení v jednom kole.
 - **Oživený** má 3 s nesmrtelnosti a blikající rámeček HP, dokud se neuzdraví
   na 40 HP nebo nesebere lékárničku.
+- **Tutoriál**: nováček vidí v prvním kole checklist (pohyb, skok, zastřelit
+  lišku, sebrat bedýnku, vylézt na strom, volitelně oživit), položky se
+  odškrtávají samy a po splnění se panel už nevrací (pamatuje prohlížeč).
+- **Tipy** se střídají v přestávce mezi vlnami a ve výsledcích kola.
+- **Profil**: úvodní obrazovka ukazuje statistiky z tohoto prohlížeče (kola,
+  výhry, lišky, oživení, nejvyšší vlna, nejvíc bodů).
+- **Titulky zvuků**: vytí, hrabání pod zemí, roh, hrom, dupnutí a další se
+  vypisují dole uprostřed, hodí se při hraní bez zvuku.
 - Dřevěné plošiny jsou průchozí zespodu (jde na ně vyskočit).
 - Každý hráč má jiný outfit: první v lese dostane mysliveckou zelenou, další
   nejnižší volnou paletu z osmi. Outfit jde vybrat i ručně na úvodní obrazovce.
@@ -180,6 +190,12 @@ Události ve `state.events`: `shoot`, `hit`, `kill`, `hurt`, `bite`, `death`, `r
 - Klient interpoluje ostatní entity podle času serveru se zpožděním, které se
   přizpůsobuje jitteru (60–260 ms), takže při horší lince nedochází k trhání.
   Vlastní lovec se předvídá lokálně.
+- Service worker (`public/sw.js`) drží úvodní obrazovku a skripty v cache:
+  offline se stránka otevře, nainstalovaná aplikace startuje hned. Skripty se
+  načítají nejdřív ze sítě, takže nová verze vždy vyhraje.
+- Predikce při ztrátě paketů: bez snapshotu déle než 0,8 s se vlastní lovec
+  lokálně zastaví, historie vstupů drží 15 s a větší oprava se plynule
+  dojede místo skoku.
 - Nastavení „Grafika: automaticky“ přepne na jednodušší vykreslování (méně
   částic, bez osvětlení a mlhy), když FPS spadne pod 40 na 4 s.
 

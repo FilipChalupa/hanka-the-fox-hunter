@@ -160,6 +160,7 @@ wss.on('connection', (ws) => {
 
     if (msg.t === 'input') game.setInput(player.id, msg);
     else if (msg.t === 'emote') game.emote(player.id, Number(msg.n));
+    else if (msg.t === 'ready') game.setReady(player.id);
     else if (msg.t === 'ping') sendJson(ws, { t: 'pong', ts: msg.ts });
   });
 

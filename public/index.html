@@ -88,9 +88,10 @@
       #tDash { right: 108px; bottom: calc(max(24px, env(safe-area-inset-bottom)) + 118px); }
       #tUse { right: 190px; bottom: max(36px, env(safe-area-inset-bottom)); }
       body.touch #emotes { top: calc(100vw * 9 / 16 + env(safe-area-inset-top) + 10px); left: 12px; flex-direction: row; }
-      body.touch #menuBtn, body.touch #fs { top: calc(100vw * 9 / 16 + env(safe-area-inset-top) + 10px); }
+      body.touch #menuBtn, body.touch #fs, body.touch #infoBtn { top: calc(100vw * 9 / 16 + env(safe-area-inset-top) + 10px); }
       body.touch #fs { right: 12px; }
       body.touch #menuBtn { right: 56px; }
+      body.touch #infoBtn { right: 100px; }
       body.touch #rotateHint { display: block; }
     }
     #rotateHint {
@@ -107,6 +108,14 @@
       font-size: 1rem; cursor: pointer; z-index: 6; opacity: 0.7;
     }
     #menuBtn:hover { opacity: 1; }
+    #infoBtn {
+      display: none;
+      position: fixed; top: max(8px, env(safe-area-inset-top)); right: calc(max(8px, env(safe-area-inset-right)) + 88px);
+      width: 34px; height: 34px; border-radius: 8px;
+      border: 2px solid rgba(242, 165, 65, 0.6); background: rgba(20, 12, 5, 0.55);
+      font-size: 1rem; cursor: pointer; z-index: 6; opacity: 0.7;
+    }
+    body.touch #infoBtn { display: block; }
     #menu[hidden] { display: none; }
     #menu {
       position: fixed; inset: 0; z-index: 30;
@@ -278,6 +287,11 @@
     .invite-row { display: flex; gap: 6px; margin-top: 4px; }
     .invite-row .invite { margin-top: 0; flex: 1; }
     .invite-row .share { width: 46px; flex: none; font-size: 1rem; padding: 6px; }
+    .profile {
+      margin-top: 10px; font-size: 0.78rem; text-align: center;
+      background: rgba(127,224,168,0.12); border: 1px solid rgba(127,224,168,0.35); border-radius: 8px; padding: 6px 10px;
+      font-variant-numeric: tabular-nums;
+    }
     .board {
       display: flex; gap: 8px; margin-top: 12px;
       background: rgba(0,0,0,0.28); border-radius: 8px; padding: 8px 10px;
@@ -371,6 +385,7 @@
   <div id="wrap"><canvas id="game" width="960" height="540"></canvas></div>
   <div id="rotateHint">Na šířku uvidíš víc lesa.</div>
   <button id="menuBtn" type="button" title="Nastavení (Esc)">⚙️</button>
+  <button id="infoBtn" type="button" title="Přehled bedýnek a hráčů (Tab)">❔</button>
   <div id="menu" hidden>
     <div class="menu-card">
       <h2>Nastavení</h2>
@@ -378,6 +393,7 @@
       <label>Hudba <input id="setMusic" type="range" min="0" max="1" step="0.05" /></label>
       <label class="check"><input id="setShake" type="checkbox" /> Otřesy kamery</label>
       <label class="check"><input id="setFlashes" type="checkbox" /> Záblesky blesků</label>
+      <label class="check"><input id="setCaptions" type="checkbox" /> Titulky k zvukům (vytí, hrabání, roh…)</label>
       <label>Velikost HUD
         <select id="setHud"><option value="0.85">Menší</option><option value="1">Normální</option><option value="1.2">Větší</option></select>
       </label>
@@ -440,6 +456,7 @@
         <button id="share" class="invite share" type="button" title="Sdílet odkaz" hidden>📤</button>
       </div>
 
+      <div id="profile" class="profile" hidden></div>
       <div id="board" class="board" hidden>
         <div class="col"><h3>Nejlepší kolo</h3><ol id="boardScore"></ol></div>
         <div class="col"><h3>Nejvyšší vlna</h3><ol id="boardWave"></ol></div>
@@ -449,7 +466,7 @@
       <div class="controls">
         <kbd>A</kbd>/<kbd>D</kbd> pohyb · <kbd>W</kbd>/<kbd>Space</kbd> skok · <kbd>Shift</kbd>/<kbd>F</kbd>/<kbd>X</kbd>/<kbd>J</kbd>/<kbd>K</kbd> střelba<br />
         <kbd>E</kbd> drž u ducha 3 s = oživení (10 HP) · <kbd>A A</kbd>/<kbd>D D</kbd> úhyb · <kbd>Q</kbd> použít, drž <kbd>Q</kbd> = hodit · <kbd>Esc</kbd> nastavení<br />
-        Světlé kmeny jde lézt: drž <kbd>W</kbd> ve výskoku · <kbd>1</kbd>–<kbd>4</kbd> emoty · <kbd>M</kbd> zvuk · kulky zraní i kamarády
+        Světlé kmeny jde lézt: drž <kbd>W</kbd> ve výskoku · <kbd>Tab</kbd> přehled bedýnek a hráčů · <kbd>1</kbd>–<kbd>4</kbd> emoty · <kbd>M</kbd> zvuk
       </div>
     </div>
   </div>

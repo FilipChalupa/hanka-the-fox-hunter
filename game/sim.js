@@ -177,7 +177,7 @@ class Game {
       reviveProgress: 0, reviver: 0, reviving: 0,
       spawnedAt: this.time, lastSurvival: 0, lifeKills: 0, bestSurvival: 0, bestLifeKills: 0, bestScore: 0,
       input: { left: false, right: false, jump: false, shoot: false, down: false, revive: false, dash: 0, use: false, throw: 0 },
-      seq: 0, fragile: false,
+      seq: 0, fragile: false, ready: false,
     };
     this.players.set(id, p);
     this.push({ kind: 'join', id, name, ghost: !p.alive });
@@ -226,6 +226,19 @@ class Game {
     if (msg.use) i.use = true;
     if (msg.throw === 1 || msg.throw === -1) i.throw = msg.throw;
     if (Number.isFinite(msg.seq)) p.seq = msg.seq;
+  }
+
+  setReady(id) {
+    const p = this.players.get(id);
+    if (!p || !this.round.over || p.ready) return;
+    p.ready = true;
+    this.push({ kind: 'ready', id, name: p.name });
+    const online = [...this.players.values()].filter((x) => x.connected);
+    if (online.length && online.every((x) => x.ready)) {
+      // Everyone wants to go: the break ends in a second
+      this.round.restartTimer = Math.min(this.round.restartTimer, 1);
+      this.push({ kind: 'allready' });
+    }
   }
 
   emote(id, n) {
@@ -572,7 +585,10 @@ class Game {
     this.round.over = false;
     this.round.won = false;
     this.clearWorld();
-    for (const p of this.players.values()) this.respawnPlayer(p);
+    for (const p of this.players.values()) {
+      p.ready = false;
+      this.respawnPlayer(p);
+    }
     this.push({ kind: 'newround', number: this.round.number, world: this.world });
   }
 
@@ -1354,7 +1370,11 @@ class Game {
       wave: this.wave,
       kills: this.totalKills,
       maxFoxes: this.maxFoxes,
-      round: { number: this.round.number, over: this.round.over, won: this.round.won, restartIn: Math.max(0, Math.ceil(this.round.restartTimer)) },
+      round: {
+        number: this.round.number, over: this.round.over, won: this.round.won, restartIn: Math.max(0, Math.ceil(this.round.restartTimer)),
+        ready: this.round.over ? [...this.players.values()].filter((p) => p.connected && p.ready).length : 0,
+        online: this.connectedCount(),
+      },
       boss: this.bossId ? { id: this.bossId, phase: this.bossPhase } : null,
       breather: Math.max(0, Math.ceil(this.breather)),
       weather: { kind: this.weather.kind, t: Math.ceil(this.weather.t) },
@@ -1370,7 +1390,8 @@ class Game {
         seq: p.seq,
         weapon: p.weapon, ammo: p.ammo, speedT: Math.ceil(p.speedTimer), stinkT: Math.ceil(p.stinkTimer),
       incAmmo: p.incAmmo, doubleT: Math.ceil(p.doubleTimer), disguiseT: Math.ceil(p.disguiseTimer), item: p.item, fragile: p.fragile,
-        revive: p.alive ? 0 : Math.round((p.reviveProgress / PLAYER.reviveTime) * 100) / 100,
+        revive: p.alive ? 0 : Math.round((p.reviveProgress / PLAYER.reviveTime) * 100) / 100, ready: p.ready,
+      roundRevives: p.roundRevives, teamKills: p.teamKills,
         reviving: p.reviving,
         survived: Math.round(p.alive ? this.time - p.spawnedAt : p.lastSurvival || 0),
         lifeKills: p.lifeKills, best: Math.round(p.bestSurvival), bestKills: p.bestLifeKills, bestScore: p.bestScore,
